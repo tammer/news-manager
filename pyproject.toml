@@ -24,6 +24,7 @@ dev = ["pytest>=8,<9"]
 
 [project.scripts]
 news-manager = "news_manager.cli:main"
+to-html = "news_manager.to_html:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

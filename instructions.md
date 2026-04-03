@@ -10,6 +10,11 @@ I am **not** interested in heavy **geopolitical** stories unless they clearly af
 
 I am **not** interested in "experts warn" type articles.  These are articles where one or two experts opine on something and the news outlet tries to turn that into a story.
 
+Other themes I have **no** interest in:
+    - sports
+    - culture wars
+    - ICE (U.S. Immigration and Customs Enforcement)
+
 I am **not** interested in sports news.
 
 ## Science

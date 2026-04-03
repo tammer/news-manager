@@ -92,6 +92,16 @@ Example:
 | `--no-cache` | Do not read or write the cache |
 | `-v`, `--verbose` | INFO logging to stderr |
 
+### Export to HTML
+
+After you have `output.json`, generate static pages (one file per category plus `index.html`):
+
+```bash
+to-html --input output.json --output-dir html
+```
+
+Open `html/index.html` in a browser. Options: `-i` / `--input` (default `output.json`), `-o` / `--output-dir` (default `html`).
+
 ## Testing
 
 ```bash
