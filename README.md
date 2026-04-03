@@ -13,6 +13,8 @@ cd news-manager
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
+
+To sync summaries to **Supabase**, also install the extra: `pip install -e ".[supabase]"` (or `news-manager[supabase]`).
 ```
 
 Copy `.env.example` to `.env` and set your Groq API key from [Groq Console](https://console.groq.com/):
@@ -56,6 +58,19 @@ By default, processed articles are stored in **`.news-manager-cache.json`** in t
 
 Changing `instructions.md`, category, or `filter` does **not** change the cache key. To pick up new wording or stricter filtering for URLs already cached, use **`--no-cache`** or delete the cache file.
 
+### Supabase (`--write-supabase`)
+
+Optional: after a successful run, **upsert** every included article into a Supabase table **`news_articles`** (natural key `(url, category)`). Summary fields are refreshed on repeat runs; **`read`** and **`liked`** are not sent in the payload so existing values stay intact.
+
+1. In the Supabase dashboard, run the SQL in [`sql/news_articles.sql`](sql/news_articles.sql).
+2. Install the extra: `pip install "news-manager[supabase]"`.
+3. Set **`SUPABASE_URL`** and **`SUPABASE_SERVICE_ROLE_KEY`** in `.env` (see [`.env.example`](.env.example)). Treat the service role key like a password — it bypasses Row Level Security.
+4. Run with **`--write-supabase`** (after `--output` is written as usual).
+
+Exit code **`2`** means Supabase sync failed (exit **`1`** is used for config / I/O / pipeline errors).
+
+Details: [database_plan.md](database_plan.md).
+
 ### `sources.json` format
 
 Each category has a `sources` array. Each entry can be:
@@ -95,6 +110,7 @@ Example:
 | `--content-max-chars` | Max characters of article body sent to the LLM (default: 12000) |
 | `--cache` | Path to JSON cache file (default: `.news-manager-cache.json`) |
 | `--no-cache` | Do not read or write the cache |
+| `--write-supabase` | Upsert articles to Supabase after writing JSON (requires `[supabase]` + env vars) |
 | `-v`, `--verbose` | INFO logging to stderr |
 
 ### Export to HTML

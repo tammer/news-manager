@@ -16,9 +16,11 @@ from news_manager.config import (
     load_dotenv_if_present,
     read_instructions,
     read_sources_json,
+    supabase_settings,
 )
 from news_manager.output import write_output
 from news_manager.pipeline import run_pipeline
+from news_manager.supabase_sync import sync_category_results_to_supabase
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -84,6 +86,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Do not read or write the disk cache",
     )
+    parser.add_argument(
+        "--write-supabase",
+        action="store_true",
+        help="After writing output.json, upsert articles to Supabase (requires env + pip install [supabase])",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -102,6 +109,13 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as e:
         print(str(e), file=sys.stderr)
         return 1
+
+    if args.write_supabase:
+        try:
+            supabase_settings()
+        except ValueError as e:
+            print(str(e), file=sys.stderr)
+            return 1
 
     try:
         groq_api_key()
@@ -128,6 +142,16 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
+
+    if args.write_supabase:
+        try:
+            sync_category_results_to_supabase(results)
+        except RuntimeError as e:
+            print(str(e), file=sys.stderr)
+            return 2
+        except Exception as e:
+            print(f"Supabase sync error: {e}", file=sys.stderr)
+            return 2
 
     return 0
 

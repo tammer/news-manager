@@ -95,3 +95,18 @@ def groq_api_key() -> str:
 
 def groq_model() -> str:
     return os.environ.get("GROQ_MODEL", DEFAULT_GROQ_MODEL).strip() or DEFAULT_GROQ_MODEL
+
+
+def supabase_settings() -> tuple[str, str]:
+    """
+    URL and service role key for Supabase REST (--write-supabase).
+    Raises ValueError if either is missing or blank.
+    """
+    url = os.environ.get("SUPABASE_URL", "").strip()
+    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    if not url or not key:
+        raise ValueError(
+            "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set when using "
+            "--write-supabase. Add them to your environment or .env file."
+        )
+    return url, key

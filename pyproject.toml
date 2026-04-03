@@ -21,6 +21,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<9"]
+supabase = ["supabase>=2,<3"]
 
 [project.scripts]
 news-manager = "news_manager.cli:main"
