@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from news_manager.models import OutputArticle, RawArticle, SourceCategory
+from news_manager.models import OutputArticle, RawArticle, Source, SourceCategory
 from news_manager.pipeline import run_pipeline
 
 
@@ -18,8 +18,8 @@ def test_run_pipeline_keeps_empty_category(
     mock_summarize.return_value = None
 
     cats = [
-        SourceCategory(category="News", sources=["a.com"]),
-        SourceCategory(category="Science", sources=["b.com"]),
+        SourceCategory(category="News", sources=[Source(url="a.com")]),
+        SourceCategory(category="Science", sources=[Source(url="b.com")]),
     ]
     out = run_pipeline(cats, instructions="x", max_articles=5, http_timeout=1.0)
     assert len(out) == 2
@@ -47,7 +47,7 @@ def test_run_pipeline_includes_summarized(
         full_summary="f",
     )
 
-    cats = [SourceCategory(category="News", sources=["a.com"])]
+    cats = [SourceCategory(category="News", sources=[Source(url="a.com")])]
     out = run_pipeline(cats, instructions="x", max_articles=5, http_timeout=1.0)
     assert len(out[0].articles) == 1
     assert out[0].articles[0].short_summary == "s"

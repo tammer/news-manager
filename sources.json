@@ -2,7 +2,10 @@
   {
     "category": "Technology",
     "sources": [
-      "https://nextbigteng.substack.com/"
+      {
+        "url": "https://nextbigteng.substack.com/feed",
+        "kind": "rss"
+      }
     ]
   }
 ]

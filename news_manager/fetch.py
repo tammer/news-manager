@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import Literal
 from urllib.parse import urljoin, urlparse, urlunparse
 
+import feedparser
 import httpx
 import trafilatura
 from bs4 import BeautifulSoup
@@ -151,12 +153,22 @@ def _extract_body_title_date(html: str, url: str) -> tuple[str, str | None, str]
     return title, date, str(text).strip()
 
 
+def _response_ok_for_article_html(ctype: str, body_prefix: str) -> bool:
+    c = ctype.lower()
+    if "html" in c or "text" in c:
+        return True
+    # Some sites mislabel; sniff
+    s = body_prefix.lstrip()[:800].lower()
+    return "<html" in s or "<!doctype html" in s
+
+
 def fetch_html(client: httpx.Client, url: str) -> str | None:
     try:
         r = client.get(url, follow_redirects=True)
         r.raise_for_status()
         ctype = r.headers.get("content-type", "")
-        if "html" not in ctype.lower() and "text" not in ctype.lower():
+        prefix = r.text[:2000] if r.text else ""
+        if not _response_ok_for_article_html(ctype, prefix):
             logger.warning("Skipping non-HTML response for %s: %s", url, ctype)
             return None
         return r.text
@@ -165,50 +177,135 @@ def fetch_html(client: httpx.Client, url: str) -> str | None:
         return None
 
 
+def _looks_like_feed_xml(text: str) -> bool:
+    s = text.lstrip()[:800]
+    return s.startswith("<?xml") or s.startswith("<rss") or s.startswith("<feed")
+
+
+def fetch_feed_xml(client: httpx.Client, url: str) -> str | None:
+    """GET feed URL; accept RSS/Atom XML (Substack, blogs, etc.)."""
+    try:
+        r = client.get(url, follow_redirects=True)
+        r.raise_for_status()
+        text = r.text
+        if not text or not text.strip():
+            return None
+        ctype = r.headers.get("content-type", "").lower()
+        if any(x in ctype for x in ("xml", "rss", "atom", "rdf")):
+            return text
+        if _looks_like_feed_xml(text):
+            return text
+        logger.warning(
+            "Feed URL %s did not look like RSS/Atom (Content-Type: %s)",
+            url,
+            ctype or "(none)",
+        )
+        return None
+    except httpx.HTTPError as e:
+        logger.warning("HTTP error fetching feed %s: %s", url, e)
+        return None
+
+
+def parse_feed_entries(body: str) -> list[tuple[str, str | None, str | None]]:
+    """
+    Return (article_url, published_str_or_none, feed_title_or_none) per entry, feed order.
+    """
+    parsed = feedparser.parse(body)
+    if getattr(parsed, "bozo", False) and not parsed.entries:
+        logger.warning(
+            "Feed parse issue: %s",
+            getattr(parsed, "bozo_exception", "unknown"),
+        )
+    out: list[tuple[str, str | None, str | None]] = []
+    for entry in parsed.entries:
+        link: str | None = entry.get("link")
+        if not link:
+            for L in entry.get("links", []) or []:
+                if isinstance(L, dict) and L.get("href"):
+                    rel = (L.get("rel") or "").lower()
+                    if rel in ("", "alternate", "self"):
+                        link = L.get("href")
+                        break
+        if not link:
+            lid = entry.get("id")
+            if isinstance(lid, str) and lid.startswith("http"):
+                link = lid
+        if not link or not str(link).strip().startswith(("http://", "https://")):
+            continue
+        pub = entry.get("published") or entry.get("updated")
+        pub_s = pub if isinstance(pub, str) else None
+        tit = entry.get("title")
+        title_s = tit.strip() if isinstance(tit, str) else None
+        out.append((str(link).strip(), pub_s, title_s))
+    return out
+
+
+def _fetch_raw_articles_from_urls(
+    client: httpx.Client,
+    urls_with_meta: list[tuple[str, str | None, str | None]],
+    *,
+    max_articles: int,
+) -> list[RawArticle]:
+    """Fetch HTML for each URL and extract article text; use feed metadata as fallback."""
+    results: list[RawArticle] = []
+    for article_url, feed_date, feed_title in urls_with_meta:
+        if len(results) >= max_articles:
+            break
+        html = fetch_html(client, article_url)
+        if not html:
+            continue
+        title, date, content = _extract_body_title_date(html, article_url)
+        if not content:
+            logger.warning("No extractable text for %s", article_url)
+            continue
+        if not title:
+            m = re.search(r"<title[^>]*>([^<]+)</title>", html, re.I | re.S)
+            title = (m.group(1).strip() if m else None) or feed_title or article_url
+        elif feed_title and len(title) < 3:
+            title = feed_title
+        if not date and feed_date:
+            date = feed_date
+        results.append(
+            RawArticle(
+                title=title,
+                date=date,
+                content=content,
+                url=article_url,
+            )
+        )
+    return results
+
+
 def fetch_articles_for_source(
     home_raw: str,
     *,
+    kind: Literal["html", "rss"] = "html",
     max_articles: int,
     timeout: float,
 ) -> list[RawArticle]:
     """
-    Fetch home page, collect article links, fetch each article up to max_articles.
+    HTML: fetch home page, discover same-site links, fetch each article.
+    RSS: fetch Atom/RSS feed (e.g. Substack `/feed`), then fetch each entry URL.
     Failures are logged; returns whatever could be fetched.
     """
     home_url = normalize_url(home_raw)
-    results: list[RawArticle] = []
     limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
     with httpx.Client(
         headers={"User-Agent": USER_AGENT},
         timeout=timeout,
         limits=limits,
     ) as client:
+        if kind == "rss":
+            feed_body = fetch_feed_xml(client, home_url)
+            if not feed_body:
+                return []
+            entries = parse_feed_entries(feed_body)
+            return _fetch_raw_articles_from_urls(client, entries, max_articles=max_articles)
+
         home_html = fetch_html(client, home_url)
         if not home_html:
-            return results
+            return []
         links = extract_article_urls(home_html, home_url)
-        # Prefer longer paths (often deeper articles); stable order
         links.sort(key=lambda u: len(urlparse(u).path), reverse=True)
-        for article_url in links:
-            if len(results) >= max_articles:
-                break
-            html = fetch_html(client, article_url)
-            if not html:
-                continue
-            title, date, content = _extract_body_title_date(html, article_url)
-            if not content:
-                logger.warning("No extractable text for %s", article_url)
-                continue
-            if not title:
-                # Fallback: page <title> via regex or BeautifulSoup
-                m = re.search(r"<title[^>]*>([^<]+)</title>", html, re.I | re.S)
-                title = m.group(1).strip() if m else article_url
-            results.append(
-                RawArticle(
-                    title=title,
-                    date=date,
-                    content=content,
-                    url=article_url,
-                )
-            )
-    return results
+        tuples = [(u, None, None) for u in links]
+        return _fetch_raw_articles_from_urls(client, tuples, max_articles=max_articles)

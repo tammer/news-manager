@@ -8,7 +8,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from news_manager.models import SourceCategory
+from news_manager.models import Source, SourceCategory
 
 DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
@@ -42,11 +42,36 @@ def read_sources_json(path: Path) -> list[SourceCategory]:
             raise ValueError(f"{path} item {i} needs non-empty string 'category'")
         if not isinstance(srcs, list) or not srcs:
             raise ValueError(f"{path} item {i} needs non-empty array 'sources'")
-        for j, s in enumerate(srcs):
-            if not isinstance(s, str) or not s.strip():
-                raise ValueError(f"{path} item {i} sources[{j}] must be a non-empty string")
-        out.append(SourceCategory(category=cat.strip(), sources=[s.strip() for s in srcs]))
+        parsed_sources: list[Source] = []
+        for j, raw in enumerate(srcs):
+            parsed_sources.append(_parse_source_entry(path, i, j, raw))
+        out.append(SourceCategory(category=cat.strip(), sources=parsed_sources))
     return out
+
+
+def _parse_source_entry(path: Path, i: int, j: int, raw: object) -> Source:
+    """Allow a string (HTML homepage) or `{\"url\": \"...\", \"kind\": \"rss\"}`."""
+    if isinstance(raw, str):
+        if not raw.strip():
+            raise ValueError(f"{path} item {i} sources[{j}] must be a non-empty string")
+        return Source(url=raw.strip(), kind="html")
+    if isinstance(raw, dict):
+        u = raw.get("url")
+        if not isinstance(u, str) or not u.strip():
+            raise ValueError(f"{path} item {i} sources[{j}] object needs non-empty string 'url'")
+        kind_raw = raw.get("kind", "html")
+        if not isinstance(kind_raw, str):
+            raise ValueError(f"{path} item {i} sources[{j}] 'kind' must be a string")
+        k = kind_raw.strip().lower()
+        if k not in ("html", "rss"):
+            raise ValueError(
+                f"{path} item {i} sources[{j}] 'kind' must be 'html' or 'rss', got {kind_raw!r}"
+            )
+        skind = "rss" if k == "rss" else "html"
+        return Source(url=u.strip(), kind=skind)
+    raise ValueError(
+        f"{path} item {i} sources[{j}] must be a string or an object with 'url' (and optional 'kind')"
+    )
 
 
 def read_instructions(path: Path) -> str:

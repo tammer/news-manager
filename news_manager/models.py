@@ -3,7 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
+
+SourceKind = Literal["html", "rss"]
+
+
+@dataclass(frozen=True)
+class Source:
+    """One source entry: homepage (HTML) or RSS/Atom feed URL."""
+
+    url: str
+    kind: SourceKind = "html"
 
 
 @dataclass
@@ -11,7 +21,7 @@ class SourceCategory:
     """One row from sources.json."""
 
     category: str
-    sources: list[str]
+    sources: list[Source]
 
 
 @dataclass

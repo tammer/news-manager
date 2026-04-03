@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from news_manager.config import read_instructions, read_sources_json
-from news_manager.models import CategoryResult, OutputArticle
+from news_manager.models import CategoryResult, OutputArticle, Source
 from news_manager.output import write_output
 
 
@@ -24,8 +24,11 @@ def test_read_sources_json_valid(tmp_path: Path) -> None:
     cats = read_sources_json(p)
     assert len(cats) == 2
     assert cats[0].category == "News"
-    assert cats[0].sources == ["cnn.com"]
-    assert cats[1].sources == ["a.com", "b.com"]
+    assert cats[0].sources == [Source(url="cnn.com", kind="html")]
+    assert cats[1].sources == [
+        Source(url="a.com", kind="html"),
+        Source(url="b.com", kind="html"),
+    ]
 
 
 def test_read_sources_json_invalid_not_array(tmp_path: Path) -> None:
@@ -46,6 +49,28 @@ def test_read_instructions(tmp_path: Path) -> None:
     p = tmp_path / "instructions.md"
     p.write_text("Hello **world**", encoding="utf-8")
     assert read_instructions(p) == "Hello **world**"
+
+
+def test_read_sources_json_rss_object(tmp_path: Path) -> None:
+    p = tmp_path / "sources.json"
+    p.write_text(
+        json.dumps(
+            [
+                {
+                    "category": "Tech",
+                    "sources": [
+                        {"url": "https://example.substack.com/feed", "kind": "rss"},
+                    ],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    cats = read_sources_json(p)
+    assert cats[0].sources[0] == Source(
+        url="https://example.substack.com/feed",
+        kind="rss",
+    )
 
 
 def test_merge_category_output_roundtrip(tmp_path: Path) -> None:

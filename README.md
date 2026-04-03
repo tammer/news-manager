@@ -1,6 +1,8 @@
 # news-manager
 
-Fetches configured news home pages, discovers article links, filters and summarizes articles using your preferences in `instructions.md` and the **Groq** API (OpenAI-compatible).
+Fetches configured sources (HTML homepages or **RSS/Atom feeds**), discovers article URLs, filters and summarizes articles using your preferences in `instructions.md` and the **Groq** API (OpenAI-compatible).
+
+Use **RSS feeds** for sites that load listings with JavaScript (for example **Substack**: `https://<publication>.substack.com/feed` instead of the homepage).
 
 ## Setup
 
@@ -35,6 +37,25 @@ python -m news_manager --sources sources.json --instructions instructions.md
 ```
 
 Default output path is `output.json` in the current working directory.
+
+### `sources.json` format
+
+Each category has a `sources` array. An entry can be:
+
+- A **string**: treated as an **HTML** homepage; the tool scrapes `<a href>` links on that page.
+- An **object** with `url` and `kind`: use `"kind": "rss"` for an **RSS or Atom feed URL** (recommended for Substack, many blogs, and podcasts with feeds).
+
+Example:
+
+```json
+{
+  "category": "Technology",
+  "sources": [
+    "https://www.example.com/news",
+    { "url": "https://author.substack.com/feed", "kind": "rss" }
+  ]
+}
+```
 
 ### Options
 

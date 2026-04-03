@@ -32,7 +32,8 @@ def run_pipeline(
         bucket: list[OutputArticle] = []
         for src in sc.sources:
             raw_list: list[RawArticle] = fetch_articles_for_source(
-                src,
+                src.url,
+                kind=src.kind,
                 max_articles=max_articles,
                 timeout=http_timeout,
             )

@@ -13,3 +13,9 @@ I am **not** interested in heavy **geopolitical** stories unless they clearly af
 I am interested in **peer-reviewed research**, **policy-relevant science** (climate, health, space), and clear **explainers** about new studies. I prefer **primary science coverage** over hype or press-release fluff.
 
 I am **not** interested in **pseudoscience**, **wellness fads** without evidence, or **product marketing** disguised as science news.
+
+## Technology
+
+I am interested in **startups**, **venture and investing**, and **AI/ML trends** when they are substantive (strategy, markets, product, research), especially data-driven analysis.
+
+I am **not** interested in **pure hype** with no takeaway, **get-rich** framing, or **sponsored** content. Substack-style essays are fine when they match the above.
