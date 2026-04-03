@@ -32,6 +32,36 @@
         "filter": false
       },
       {
+        "url": "https://99d.substack.com/feed",
+        "kind": "rss",
+        "filter": false
+      },
+      {
+        "url": "https://mondaymorning.substack.com/feed",
+        "kind": "rss",
+        "filter": false
+      },
+      {
+        "url": "https://aashay.substack.com/feed",
+        "kind": "rss",
+        "filter": false
+      },
+      {
+        "url": "https://www.understandingai.org/feed",
+        "kind": "rss",
+        "filter": false
+      },
+      {
+        "url": "https://www.a16z.news/feed",
+        "kind": "rss",
+        "filter": false
+      },
+      {
+        "url": "https://www.citriniresearch.com/feed",
+        "kind": "rss",
+        "filter": false
+      },
+      {
         "url": "https://www.techcrunch.com/feed/",
         "kind": "rss"
       }
