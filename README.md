@@ -38,6 +38,8 @@ python -m news_manager --sources sources.json --instructions instructions.md
 
 Default output path is `output.json` in the current working directory.
 
+While each article is processed, a line is written to **stderr** with the decision, for example `[included] Article title` or `[excluded] Article title` (`[error]` if the LLM call failed or the response could not be parsed). This is independent of `-v` logging.
+
 ### `sources.json` format
 
 Each category has a `sources` array. An entry can be:

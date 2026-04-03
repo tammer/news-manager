@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any
+import sys
+from typing import Any, Literal
 
 from news_manager.config import DEFAULT_CONTENT_MAX_CHARS, groq_model
 from news_manager.llm import get_client
@@ -14,6 +15,17 @@ from news_manager.models import OutputArticle, RawArticle
 logger = logging.getLogger(__name__)
 
 _JSON_FENCE = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
+
+_Decision = Literal["included", "excluded", "error"]
+
+
+def _one_line_title(title: str) -> str:
+    return " ".join(title.split()).strip() or "(no title)"
+
+
+def _emit_decision(title: str, decision: _Decision) -> None:
+    """Progress to stderr so stdout stays free for optional future piping."""
+    print(f"[{decision}] {_one_line_title(title)}", file=sys.stderr)
 
 
 def _truncate(text: str, max_chars: int) -> str:
@@ -85,6 +97,8 @@ Respond with JSON only, using this exact shape:
 If the article does not match what the user wants for this category, set include to false.
 """
 
+    title = article.title
+
     try:
         resp = client.chat.completions.create(
             model=model,
@@ -96,20 +110,24 @@ If the article does not match what the user wants for this category, set include
         )
     except Exception as e:
         logger.warning("Groq API error for %s: %s", article.url, e)
+        _emit_decision(title, "error")
         return None
 
     choice = resp.choices[0].message.content
     if not choice:
         logger.warning("Empty Groq response for %s", article.url)
+        _emit_decision(title, "error")
         return None
 
     data = _parse_json_response(choice)
     if data is None:
         logger.warning("Could not parse JSON from model for %s: %r", article.url, choice[:500])
+        _emit_decision(title, "error")
         return None
 
     include = data.get("include")
     if include is not True:
+        _emit_decision(title, "excluded")
         return None
 
     short_s = data.get("short_summary", "")
@@ -119,6 +137,7 @@ If the article does not match what the user wants for this category, set include
     if not isinstance(full_s, str):
         full_s = str(full_s)
 
+    _emit_decision(title, "included")
     return OutputArticle(
         title=article.title,
         date=article.date,
