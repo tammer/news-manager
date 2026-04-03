@@ -38,18 +38,23 @@ python -m news_manager --sources sources.json --instructions instructions.md
 
 Default output path is `output.json` in the current working directory.
 
-While each article is processed, a line is written to **stderr** with the decision, for example `[included] Article title` or `[excluded] Article title` (`[error]` if the LLM call failed or the response could not be parsed). This is independent of `-v` logging.
+While each article is processed, a line is written to **stderr** (independent of `-v` logging):
 
-Cache hits print `[cached] [included] …` or `[cached] [excluded] …` and skip both HTTP fetch and Groq for that article.
+| Situation | stderr line shape |
+|-----------|-------------------|
+| **From disk cache** (no article fetch, no Groq) | `[cached] [included] Title` or `[cached] [excluded] Title` |
+| **Fresh run** (fetched page + LLM) | `[included] Title`, `[excluded] Title`, or `[error] Title` if the LLM call failed or the response could not be parsed |
+
+If a line **starts with `[cached]`**, the result was loaded from the cache; otherwise it was just computed.
 
 ### Disk cache
 
-By default, processed articles are stored in **`.news-manager-cache.json`** in the current working directory (JSON map keyed by URL + category + full `instructions.md` text + per-source `filter`). If you run again with the same inputs, matching articles are **not** re-fetched or re-summarized.
+By default, processed articles are stored in **`.news-manager-cache.json`** in the current working directory (JSON map keyed by **normalized article URL only**). If you run again and the same URL appears, it is **not** re-fetched or re-summarized.
 
 - Change location: `--cache /path/to/cache.json`
 - Disable: `--no-cache`
 
-Edit `instructions.md` or `sources.json` (category, filter, or URL) and the cache key changes so entries naturally miss; you can also delete the cache file to force a full refresh.
+Changing `instructions.md`, category, or `filter` does **not** change the cache key. To pick up new wording or stricter filtering for URLs already cached, use **`--no-cache`** or delete the cache file.
 
 ### `sources.json` format
 

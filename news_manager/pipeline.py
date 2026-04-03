@@ -52,7 +52,7 @@ def run_pipeline(
                     label_for_excluded = feed_title or nu
 
                     if cache is not None:
-                        hit = cache.lookup(nu, sc.category, instructions, src.filter)
+                        hit = cache.lookup(nu)
                         if hit is not None:
                             status, cached_article = hit
                             successes += 1
@@ -82,23 +82,9 @@ def run_pipeline(
                     )
                     if cache is not None:
                         if outcome.outcome == "included" and outcome.output is not None:
-                            cache.put(
-                                nu,
-                                sc.category,
-                                instructions,
-                                src.filter,
-                                "included",
-                                outcome.output,
-                            )
+                            cache.put(nu, "included", outcome.output)
                         elif outcome.outcome == "excluded":
-                            cache.put(
-                                nu,
-                                sc.category,
-                                instructions,
-                                src.filter,
-                                "excluded",
-                                None,
-                            )
+                            cache.put(nu, "excluded", None)
                     if outcome.output is not None:
                         bucket.append(outcome.output)
         out.append(CategoryResult(category=sc.category, articles=bucket))

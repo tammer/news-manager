@@ -14,22 +14,16 @@ from news_manager.models import OutputArticle
 
 logger = logging.getLogger(__name__)
 
-CACHE_FILE_VERSION = 1
+CACHE_FILE_VERSION = 2
 
 CacheStatus = Literal["included", "excluded"]
 
 DEFAULT_CACHE_PATH = Path(".news-manager-cache.json")
 
 
-def cache_key(
-    url: str,
-    category: str,
-    instructions: str,
-    apply_filter: bool,
-) -> str:
-    """Stable key for URL + processing context (instructions change invalidates)."""
-    payload = f"{url}\n{category}\n{instructions}\n{apply_filter!s}"
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+def cache_key(url: str) -> str:
+    """Stable key from normalized article URL only (same story shares one cache entry)."""
+    return hashlib.sha256(url.encode("utf-8")).hexdigest()
 
 
 def _output_article_to_dict(a: OutputArticle) -> dict[str, Any]:
@@ -82,15 +76,9 @@ class ArticleCache:
         if isinstance(ent, dict):
             self._entries = {k: v for k, v in ent.items() if isinstance(v, dict)}
 
-    def lookup(
-        self,
-        url: str,
-        category: str,
-        instructions: str,
-        apply_filter: bool,
-    ) -> tuple[CacheStatus, OutputArticle | None] | None:
+    def lookup(self, url: str) -> tuple[CacheStatus, OutputArticle | None] | None:
         """Return (status, article if included) or None if miss."""
-        k = cache_key(url, category, instructions, apply_filter)
+        k = cache_key(url)
         rec = self._entries.get(k)
         if not rec:
             return None
@@ -110,13 +98,10 @@ class ArticleCache:
     def put(
         self,
         url: str,
-        category: str,
-        instructions: str,
-        apply_filter: bool,
         status: CacheStatus,
         article: OutputArticle | None,
     ) -> None:
-        k = cache_key(url, category, instructions, apply_filter)
+        k = cache_key(url)
         if status == "included" and article is not None:
             self._entries[k] = {
                 "status": "included",

@@ -20,7 +20,14 @@
         "url": "https://nextbigteng.substack.com/feed",
         "kind": "rss",
         "filter": false
+      },
+      {
+        "url": "https://www.newcomer.co/feed",
+        "kind": "rss",
+        "filter": false
       }
+
+
     ]
   }
 ]
