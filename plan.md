@@ -4,16 +4,8 @@ This software reads articles and summarizes them for the user. It filters out th
 
 This software has two inputs
 
-Firstly, it has file called sources.json which tells the system where to look for articles
-Second, it has a file called instructions.md which is written in plain english and tells the software how to filter. i.e. what the user cares about.
-
-
-
-1) a JSON file listing 
-
-# Fundamental Input
-
-THe fundamental input is JSON in the form:
+Firstly, it has file called sources.json which tells the system where to look for articles.
+The file would be of this form:
 
 [
     {
@@ -33,32 +25,74 @@ THe fundamental input is JSON in the form:
     }
 ]
 
-Also, there is a instruction prompt that tells the software what information I want.  For example, the instrunction might be:
 
-For news, I am interested in local news for Toronto and Ontario and domestic Canadian news. I am not interested in geopolitical news or US politics.
+Second, it has a file called instructions.md which is written in plain english and tells the software how to filter. i.e. what the user cares about. For example:
+
+"For news, I am interested in local news for Toronto and Ontario and domestic Canadian news. I am not interested in geopolitical news or US politics."
 
 
+# Architecture
 
-# Article Fetch module
+We should take a modular approach to building this software.  We should have these modules
 
-## Input
+## Fetching Module
 
-a URL. This URL is assumed to be the "home page" that lists a number of articles. For example, cnn.com or techcrunch.com
+This module takes a URL as input.
+This URL is assumed to be the "home page" that lists a number of articles. For example, cnn.com or techcrunch.com
+The output is a list of articles in the form:
 
-## Output
-
-a list of articles in the form:
     [
         {
             title:
             date: (if avaialble)
             content: (the text of the article)
+            url: the url of the article
         }.
         etc
     ]
 
-## Processing
+### Processing
 
 The module will first pull out all the links. (i.e. <a href..>)
 Then we pass that information to an LLM. the LLM will be instructed to produce the output.
 
+## Summarizing Module
+
+This module will take the list of articles from the fetching module and process the list.
+It will decide which articles match the section criteria given by the user in instructions.md
+For those articles that meet the criteria, it will generate a short 25 word summary and a 200 word summary.
+It will output a list in the form:
+
+ [
+        {
+            title:
+            date: (if avaialble)
+            content: (the text of the article)
+            url: the url of the article
+            short_summary:
+            full_summary:
+        }.
+        etc
+    ]
+
+## main program
+
+The main program will iterate through all sources.json and generate output that looks like this:
+
+[
+    {
+        category: "News",
+        articles: 
+        [
+            {
+            title:
+            date: (if avaialble)
+            content: (the text of the article)
+            url: the url of the article
+            short_summary:
+            full_summary:
+            },
+            etc
+        ]
+    },
+]
