@@ -17,7 +17,8 @@ from news_manager.models import RawArticle
 
 logger = logging.getLogger(__name__)
 
-USER_AGENT = "news-manager/0.1 (+https://github.com/)"
+# Many CDNs treat non-browser UAs harshly; curl’s default identity is widely accepted.
+USER_AGENT = "curl/8.7.1"
 
 # Paths that are unlikely to be article pages (heuristic; document in code).
 PATH_DENY_SUBSTRINGS = (

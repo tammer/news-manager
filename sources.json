@@ -1,5 +1,14 @@
 [
   {
+    "category": "News",
+    "sources": [
+      {
+        "url": "https://www.cbc.ca/webfeed/rss/rss-topstories",
+        "kind": "rss"
+      }
+    ]
+  },
+  {
     "category": "Technology",
     "sources": [
       {
