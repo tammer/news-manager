@@ -50,11 +50,11 @@ def read_sources_json(path: Path) -> list[SourceCategory]:
 
 
 def _parse_source_entry(path: Path, i: int, j: int, raw: object) -> Source:
-    """Allow a string (HTML homepage) or `{\"url\": \"...\", \"kind\": \"rss\"}`."""
+    """String (HTML) or object with `url`, optional `kind`, optional `filter` (default true)."""
     if isinstance(raw, str):
         if not raw.strip():
             raise ValueError(f"{path} item {i} sources[{j}] must be a non-empty string")
-        return Source(url=raw.strip(), kind="html")
+        return Source(url=raw.strip(), kind="html", filter=True)
     if isinstance(raw, dict):
         u = raw.get("url")
         if not isinstance(u, str) or not u.strip():
@@ -68,9 +68,14 @@ def _parse_source_entry(path: Path, i: int, j: int, raw: object) -> Source:
                 f"{path} item {i} sources[{j}] 'kind' must be 'html' or 'rss', got {kind_raw!r}"
             )
         skind = "rss" if k == "rss" else "html"
-        return Source(url=u.strip(), kind=skind)
+        filt = raw.get("filter", True)
+        if not isinstance(filt, bool):
+            raise ValueError(
+                f"{path} item {i} sources[{j}] optional 'filter' must be a boolean, got {type(filt).__name__}"
+            )
+        return Source(url=u.strip(), kind=skind, filter=filt)
     raise ValueError(
-        f"{path} item {i} sources[{j}] must be a string or an object with 'url' (and optional 'kind')"
+        f"{path} item {i} sources[{j}] must be a string or an object with 'url' (and optional 'kind', 'filter')"
     )
 
 

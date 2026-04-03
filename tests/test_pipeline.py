@@ -18,8 +18,8 @@ def test_run_pipeline_keeps_empty_category(
     mock_summarize.return_value = None
 
     cats = [
-        SourceCategory(category="News", sources=[Source(url="a.com")]),
-        SourceCategory(category="Science", sources=[Source(url="b.com")]),
+        SourceCategory(category="News", sources=[Source(url="a.com", filter=True)]),
+        SourceCategory(category="Science", sources=[Source(url="b.com", filter=True)]),
     ]
     out = run_pipeline(cats, instructions="x", max_articles=5, http_timeout=1.0)
     assert len(out) == 2
@@ -47,7 +47,35 @@ def test_run_pipeline_includes_summarized(
         full_summary="f",
     )
 
-    cats = [SourceCategory(category="News", sources=[Source(url="a.com")])]
+    cats = [SourceCategory(category="News", sources=[Source(url="a.com", filter=True)])]
     out = run_pipeline(cats, instructions="x", max_articles=5, http_timeout=1.0)
     assert len(out[0].articles) == 1
     assert out[0].articles[0].short_summary == "s"
+    assert mock_summarize.call_args.kwargs["apply_filter"] is True
+
+
+@patch("news_manager.pipeline.filter_and_summarize")
+@patch("news_manager.pipeline.fetch_articles_for_source")
+def test_run_pipeline_apply_filter_false(
+    mock_fetch: MagicMock,
+    mock_summarize: MagicMock,
+) -> None:
+    mock_fetch.return_value = [
+        RawArticle(title="T", date=None, content="c", url="https://u"),
+    ]
+    mock_summarize.return_value = OutputArticle(
+        title="T",
+        date=None,
+        content="c",
+        url="https://u",
+        short_summary="s",
+        full_summary="f",
+    )
+    cats = [
+        SourceCategory(
+            category="News",
+            sources=[Source(url="a.com", filter=False)],
+        )
+    ]
+    run_pipeline(cats, instructions="x", max_articles=5, http_timeout=1.0)
+    assert mock_summarize.call_args.kwargs["apply_filter"] is False

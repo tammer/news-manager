@@ -14,6 +14,8 @@ class Source:
 
     url: str
     kind: SourceKind = "html"
+    #: If False, every fetched article from this source is summarized and included (no LLM exclude step).
+    filter: bool = True
 
 
 @dataclass

@@ -68,3 +68,33 @@ def test_filter_include(mock_get_client: MagicMock) -> None:
     assert out.short_summary == "Short here."
     assert out.full_summary == "Longer summary text."
     assert out.url == "https://x"
+
+
+@patch("news_manager.summarize.get_client")
+def test_summarize_only_when_apply_filter_false(mock_get_client: MagicMock) -> None:
+    client = MagicMock()
+    mock_get_client.return_value = client
+    client.chat.completions.create.return_value = MagicMock(
+        choices=[
+            MagicMock(
+                message=MagicMock(
+                    content='{"short_summary": "Short.", "full_summary": "Longer text here."}'
+                )
+            )
+        ]
+    )
+    raw = RawArticle(
+        title="T",
+        date=None,
+        content="body",
+        url="https://x",
+    )
+    out = filter_and_summarize(
+        raw,
+        category="News",
+        instructions="context",
+        apply_filter=False,
+    )
+    assert out is not None
+    assert out.short_summary == "Short."
+    assert out.full_summary == "Longer text here."

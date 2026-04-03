@@ -4,7 +4,8 @@
     "sources": [
       {
         "url": "https://nextbigteng.substack.com/feed",
-        "kind": "rss"
+        "kind": "rss",
+        "filter": false
       }
     ]
   }

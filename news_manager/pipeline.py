@@ -43,6 +43,7 @@ def run_pipeline(
                     category=sc.category,
                     instructions=instructions,
                     content_max_chars=cm,
+                    apply_filter=src.filter,
                 )
                 if done is not None:
                     bucket.append(done)

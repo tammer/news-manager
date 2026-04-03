@@ -42,10 +42,14 @@ While each article is processed, a line is written to **stderr** with the decisi
 
 ### `sources.json` format
 
-Each category has a `sources` array. An entry can be:
+Each category has a `sources` array. Each entry can be:
 
-- A **string**: treated as an **HTML** homepage; the tool scrapes `<a href>` links on that page.
-- An **object** with `url` and `kind`: use `"kind": "rss"` for an **RSS or Atom feed URL** (recommended for Substack, many blogs, and podcasts with feeds).
+- A **string**: treated as an **HTML** homepage with **`filter` implicitly `true`**; the tool scrapes `<a href>` links on that page.
+- An **object** with **`url`** and optional **`kind`** (`html` or `rss`), optional **`filter`** (boolean, default **`true`**):
+  - **`filter: true`**: the LLM may **exclude** articles that do not match `instructions.md`.
+  - **`filter: false`**: every article from **that source** is **summarized and included** (no exclusion step).
+
+Use `"kind": "rss"` for **RSS or Atom feed URLs** (recommended for Substack, many blogs, and podcasts with feeds). To set **`filter`** on a source, use the object form (not a bare string).
 
 Example:
 
@@ -54,7 +58,11 @@ Example:
   "category": "Technology",
   "sources": [
     "https://www.example.com/news",
-    { "url": "https://author.substack.com/feed", "kind": "rss" }
+    {
+      "url": "https://author.substack.com/feed",
+      "kind": "rss",
+      "filter": false
+    }
   ]
 }
 ```
