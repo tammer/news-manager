@@ -105,7 +105,7 @@ After you have `output.json`, generate static pages (one file per category plus 
 to-html --input output.json --output-dir html
 ```
 
-Open `html/index.html` in a browser. Options: `-i` / `--input` (default `output.json`), `-o` / `--output-dir` (default `html`).
+Open `html/index.html` in a browser. Options: `-i` / `--input` (default `output.json`), `-o` / `--output-dir` (default `html`). Each article’s **`source`** field is the hostname of that row’s configured source (for example `nextbigthing.substack.com`); generated pages show it in the meta line under the title.
 
 ## Testing
 

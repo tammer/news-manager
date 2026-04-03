@@ -79,6 +79,22 @@ def normalize_url(raw: str) -> str:
     return urlunparse(parsed)
 
 
+def source_base_label(feed_url: str) -> str:
+    """
+    Hostname for JSON/HTML display (e.g. nextbigthing.substack.com).
+    Uses the configured source URL; strips leading www.
+    """
+    s = feed_url.strip()
+    if not s:
+        return ""
+    if "://" not in s:
+        s = "https://" + s
+    host = urlparse(s).hostname
+    if not host:
+        return ""
+    return _strip_www(host)
+
+
 def _strip_www(netloc: str) -> str:
     n = netloc.lower()
     return n[4:] if n.startswith("www.") else n

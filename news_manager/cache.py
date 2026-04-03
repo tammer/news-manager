@@ -34,6 +34,7 @@ def _output_article_to_dict(a: OutputArticle) -> dict[str, Any]:
         "url": a.url,
         "short_summary": a.short_summary,
         "full_summary": a.full_summary,
+        "source": a.source,
     }
 
 
@@ -45,6 +46,7 @@ def _dict_to_output_article(d: dict[str, Any]) -> OutputArticle:
         url=str(d["url"]),
         short_summary=str(d["short_summary"]),
         full_summary=str(d["full_summary"]),
+        source=str(d.get("source", "")),
     )
 
 

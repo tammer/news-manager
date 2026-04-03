@@ -123,6 +123,7 @@ def test_merge_category_output_roundtrip(tmp_path: Path) -> None:
                     url="https://e",
                     short_summary="s",
                     full_summary="f",
+                    source="e.example.com",
                 )
             ],
         ),
@@ -133,5 +134,6 @@ def test_merge_category_output_roundtrip(tmp_path: Path) -> None:
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data[0]["category"] == "A"
     assert len(data[0]["articles"]) == 1
+    assert data[0]["articles"][0]["source"] == "e.example.com"
     assert data[1]["category"] == "B"
     assert data[1]["articles"] == []

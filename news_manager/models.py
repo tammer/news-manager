@@ -46,6 +46,8 @@ class OutputArticle:
     url: str
     short_summary: str
     full_summary: str
+    #: Base hostname of the configured source (e.g. nextbigthing.substack.com).
+    source: str
 
     def to_json_dict(self) -> dict[str, Any]:
         return {
@@ -55,6 +57,7 @@ class OutputArticle:
             "url": self.url,
             "short_summary": self.short_summary,
             "full_summary": self.full_summary,
+            "source": self.source,
         }
 
 

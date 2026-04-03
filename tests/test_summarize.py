@@ -68,6 +68,7 @@ def test_filter_include(mock_get_client: MagicMock) -> None:
     assert out.short_summary == "Short here."
     assert out.full_summary == "Longer summary text."
     assert out.url == "https://x"
+    assert out.source == ""
 
 
 @patch("news_manager.summarize.get_client")
@@ -98,3 +99,4 @@ def test_summarize_only_when_apply_filter_false(mock_get_client: MagicMock) -> N
     assert out is not None
     assert out.short_summary == "Short."
     assert out.full_summary == "Longer text here."
+    assert out.source == ""

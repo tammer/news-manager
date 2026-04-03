@@ -28,6 +28,7 @@ def test_cache_roundtrip(tmp_path: Path) -> None:
         url="https://e",
         short_summary="s",
         full_summary="f",
+        source="e.example.com",
     )
     c.put("https://e", "included", art)
     c.save()

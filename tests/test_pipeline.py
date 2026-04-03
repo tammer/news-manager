@@ -55,6 +55,7 @@ def test_run_pipeline_includes_summarized(
             url="https://u",
             short_summary="s",
             full_summary="f",
+            source="a.com",
         ),
         outcome="included",
     )
@@ -63,7 +64,9 @@ def test_run_pipeline_includes_summarized(
     out = run_pipeline(cats, instructions="x", max_articles=5, http_timeout=1.0)
     assert len(out[0].articles) == 1
     assert out[0].articles[0].short_summary == "s"
+    assert out[0].articles[0].source == "a.com"
     assert mock_outcome.call_args.kwargs["apply_filter"] is True
+    assert mock_outcome.call_args.kwargs["source"] == "a.com"
 
 
 @patch("news_manager.pipeline.filter_and_summarize_outcome")
@@ -86,6 +89,7 @@ def test_run_pipeline_apply_filter_false(
             url="https://u",
             short_summary="s",
             full_summary="f",
+            source="a.com",
         ),
         outcome="included",
     )
@@ -97,6 +101,7 @@ def test_run_pipeline_apply_filter_false(
     ]
     run_pipeline(cats, instructions="x", max_articles=5, http_timeout=1.0)
     assert mock_outcome.call_args.kwargs["apply_filter"] is False
+    assert mock_outcome.call_args.kwargs["source"] == "a.com"
 
 
 @patch("news_manager.pipeline.filter_and_summarize_outcome")
@@ -123,6 +128,7 @@ def test_run_pipeline_second_run_uses_cache_no_fetch(
             url="https://example.com/post/1",
             short_summary="s",
             full_summary="f",
+            source="feed",
         ),
         outcome="included",
     )

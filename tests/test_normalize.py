@@ -2,7 +2,7 @@
 
 import pytest
 
-from news_manager.fetch import normalize_url, same_site
+from news_manager.fetch import normalize_url, same_site, source_base_label
 
 
 def test_normalize_adds_https() -> None:
@@ -31,3 +31,11 @@ def test_normalize_empty_raises() -> None:
 def test_same_site_www() -> None:
     assert same_site("https://www.example.com/", "https://example.com/a")
     assert same_site("https://example.com/", "https://www.example.com/b")
+
+
+def test_source_base_label_host() -> None:
+    assert source_base_label("https://nextbigthing.substack.com/feed") == (
+        "nextbigthing.substack.com"
+    )
+    assert source_base_label("www.news.example.com") == "news.example.com"
+    assert source_base_label("") == ""

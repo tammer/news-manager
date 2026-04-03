@@ -72,6 +72,7 @@ def _summarize_only(
     category: str,
     instructions: str,
     content_max_chars: int,
+    source: str,
 ) -> SummarizeOutcome:
     """LLM: summaries only (no include/exclude). All articles that succeed are kept."""
     client = get_client()
@@ -149,6 +150,7 @@ Respond with JSON only, using this exact shape:
         url=article.url,
         short_summary=short_s.strip(),
         full_summary=full_s.strip(),
+        source=source,
     )
     return SummarizeOutcome(output=out, outcome="included")
 
@@ -160,6 +162,7 @@ def filter_and_summarize_outcome(
     instructions: str,
     content_max_chars: int = DEFAULT_CONTENT_MAX_CHARS,
     apply_filter: bool = True,
+    source: str = "",
 ) -> SummarizeOutcome:
     """
     One LLM call: filter+summarize, or summarize only (apply_filter False).
@@ -171,6 +174,7 @@ def filter_and_summarize_outcome(
             category=category,
             instructions=instructions,
             content_max_chars=content_max_chars,
+            source=source,
         )
 
     client = get_client()
@@ -258,6 +262,7 @@ If the article does not match what the user wants for this category, set include
         url=article.url,
         short_summary=short_s.strip(),
         full_summary=full_s.strip(),
+        source=source,
     )
     return SummarizeOutcome(output=out, outcome="included")
 
@@ -269,6 +274,7 @@ def filter_and_summarize(
     instructions: str,
     content_max_chars: int = DEFAULT_CONTENT_MAX_CHARS,
     apply_filter: bool = True,
+    source: str = "",
 ) -> OutputArticle | None:
     """
     One LLM call: either filter+summarize, or summarize only (when apply_filter is False).
@@ -280,4 +286,5 @@ def filter_and_summarize(
         instructions=instructions,
         content_max_chars=content_max_chars,
         apply_filter=apply_filter,
+        source=source,
     ).output

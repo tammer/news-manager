@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import httpx
 
 from news_manager.cache import ArticleCache
@@ -11,6 +13,7 @@ from news_manager.fetch import (
     discover_article_targets,
     fetch_single_raw_article,
     normalize_url,
+    source_base_label,
 )
 from news_manager.models import CategoryResult, SourceCategory
 from news_manager.summarize import emit_cached_decision, filter_and_summarize_outcome
@@ -38,6 +41,7 @@ def run_pipeline(
     for sc in categories:
         bucket: list[OutputArticle] = []
         for src in sc.sources:
+            source_label = source_base_label(src.url)
             with httpx.Client(
                 headers={"User-Agent": USER_AGENT},
                 timeout=http_timeout,
@@ -57,7 +61,9 @@ def run_pipeline(
                             status, cached_article = hit
                             successes += 1
                             if status == "included" and cached_article is not None:
-                                bucket.append(cached_article)
+                                bucket.append(
+                                    replace(cached_article, source=source_label)
+                                )
                                 emit_cached_decision(
                                     "included",
                                     cached_article.title,
@@ -79,6 +85,7 @@ def run_pipeline(
                         instructions=instructions,
                         content_max_chars=cm,
                         apply_filter=src.filter,
+                        source=source_label,
                     )
                     if cache is not None:
                         if outcome.outcome == "included" and outcome.output is not None:

@@ -1,0 +1,12 @@
+[
+  {
+    "category": "Technology",
+    "sources": [
+      {
+        "url": "https://nextbigteng.substack.com/feed",
+        "kind": "rss",
+        "filter": false
+      }
+    ]
+  }
+]

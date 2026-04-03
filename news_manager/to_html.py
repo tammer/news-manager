@@ -55,17 +55,21 @@ def _article_html(
     title: str,
     article_url: str,
     date_val: Any,
+    source_val: str,
     short_summary: str,
     full_summary: str,
 ) -> str:
     date_str = "—"
     if date_val is not None and str(date_val).strip():
         date_str = html.escape(str(date_val))
+    source_str = "—"
+    if source_val.strip():
+        source_str = html.escape(source_val.strip())
     title_esc = html.escape(title)
     url_esc = html.escape(article_url, quote=True)
     return f"""<article>
 <h2><a href="{url_esc}" rel="noopener noreferrer">{title_esc}</a></h2>
-<p class="meta"><strong>Date:</strong> {date_str}</p>
+<p class="meta"><strong>Date:</strong> {date_str} · <strong>Source:</strong> {source_str}</p>
 <p class="short"><strong>Short summary:</strong> {html.escape(short_summary)}</p>
 <p class="full"><strong>Full summary:</strong> {html.escape(full_summary)}</p>
 </article>"""
@@ -81,11 +85,13 @@ def _category_page(category: str, articles: list[dict[str, Any]]) -> str:
         url = str(a.get("url", ""))
         short_s = str(a.get("short_summary", ""))
         full_s = str(a.get("full_summary", ""))
+        src = str(a.get("source", ""))
         blocks.append(
             _article_html(
                 title,
                 url,
                 a.get("date"),
+                src,
                 short_s,
                 full_s,
             )

@@ -20,6 +20,7 @@ def test_generate_html_files_writes_index_and_category(tmp_path: Path) -> None:
                     "url": "https://example.com/a",
                     "short_summary": "Short here.",
                     "full_summary": "Full text here.",
+                    "source": "example.com",
                 }
             ],
         }
@@ -43,6 +44,7 @@ def test_generate_html_files_writes_index_and_category(tmp_path: Path) -> None:
     assert "2024-01-15" in cat_html
     assert "Short here." in cat_html
     assert "Full text here." in cat_html
+    assert "Source:</strong> example.com" in cat_html
 
 
 def test_duplicate_category_slugs(tmp_path: Path) -> None:
