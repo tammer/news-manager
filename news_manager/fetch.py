@@ -240,6 +240,60 @@ def parse_feed_entries(body: str) -> list[tuple[str, str | None, str | None]]:
     return out
 
 
+def discover_article_targets(
+    client: httpx.Client,
+    home_raw: str,
+    *,
+    kind: Literal["html", "rss"] = "html",
+) -> list[tuple[str, str | None, str | None]]:
+    """
+    List candidate article URLs in crawl order (RSS feed order or HTML link order).
+    Does not fetch individual article bodies.
+    """
+    home_url = normalize_url(home_raw)
+    if kind == "rss":
+        feed_body = fetch_feed_xml(client, home_url)
+        if not feed_body:
+            return []
+        return parse_feed_entries(feed_body)
+    home_html = fetch_html(client, home_url)
+    if not home_html:
+        return []
+    links = extract_article_urls(home_html, home_url)
+    links.sort(key=lambda u: len(urlparse(u).path), reverse=True)
+    return [(u, None, None) for u in links]
+
+
+def fetch_single_raw_article(
+    client: httpx.Client,
+    article_url: str,
+    feed_date: str | None,
+    feed_title: str | None,
+) -> RawArticle | None:
+    """Fetch one article page and extract body (same logic as batch fetch)."""
+    nu = normalize_url(article_url)
+    html = fetch_html(client, nu)
+    if not html:
+        return None
+    title, date, content = _extract_body_title_date(html, nu)
+    if not content:
+        logger.warning("No extractable text for %s", nu)
+        return None
+    if not title:
+        m = re.search(r"<title[^>]*>([^<]+)</title>", html, re.I | re.S)
+        title = (m.group(1).strip() if m else None) or feed_title or nu
+    elif feed_title and len(title) < 3:
+        title = feed_title
+    if not date and feed_date:
+        date = feed_date
+    return RawArticle(
+        title=title,
+        date=date,
+        content=content,
+        url=nu,
+    )
+
+
 def _fetch_raw_articles_from_urls(
     client: httpx.Client,
     urls_with_meta: list[tuple[str, str | None, str | None]],
@@ -251,28 +305,9 @@ def _fetch_raw_articles_from_urls(
     for article_url, feed_date, feed_title in urls_with_meta:
         if len(results) >= max_articles:
             break
-        html = fetch_html(client, article_url)
-        if not html:
-            continue
-        title, date, content = _extract_body_title_date(html, article_url)
-        if not content:
-            logger.warning("No extractable text for %s", article_url)
-            continue
-        if not title:
-            m = re.search(r"<title[^>]*>([^<]+)</title>", html, re.I | re.S)
-            title = (m.group(1).strip() if m else None) or feed_title or article_url
-        elif feed_title and len(title) < 3:
-            title = feed_title
-        if not date and feed_date:
-            date = feed_date
-        results.append(
-            RawArticle(
-                title=title,
-                date=date,
-                content=content,
-                url=article_url,
-            )
-        )
+        raw = fetch_single_raw_article(client, article_url, feed_date, feed_title)
+        if raw is not None:
+            results.append(raw)
     return results
 
 

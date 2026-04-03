@@ -40,6 +40,17 @@ Default output path is `output.json` in the current working directory.
 
 While each article is processed, a line is written to **stderr** with the decision, for example `[included] Article title` or `[excluded] Article title` (`[error]` if the LLM call failed or the response could not be parsed). This is independent of `-v` logging.
 
+Cache hits print `[cached] [included] …` or `[cached] [excluded] …` and skip both HTTP fetch and Groq for that article.
+
+### Disk cache
+
+By default, processed articles are stored in **`.news-manager-cache.json`** in the current working directory (JSON map keyed by URL + category + full `instructions.md` text + per-source `filter`). If you run again with the same inputs, matching articles are **not** re-fetched or re-summarized.
+
+- Change location: `--cache /path/to/cache.json`
+- Disable: `--no-cache`
+
+Edit `instructions.md` or `sources.json` (category, filter, or URL) and the cache key changes so entries naturally miss; you can also delete the cache file to force a full refresh.
+
 ### `sources.json` format
 
 Each category has a `sources` array. Each entry can be:
@@ -77,6 +88,8 @@ Example:
 | `--max-articles` | Max articles to fetch per source (default: 15) |
 | `--timeout` | HTTP timeout in seconds (default: 30) |
 | `--content-max-chars` | Max characters of article body sent to the LLM (default: 12000) |
+| `--cache` | Path to JSON cache file (default: `.news-manager-cache.json`) |
+| `--no-cache` | Do not read or write the cache |
 | `-v`, `--verbose` | INFO logging to stderr |
 
 ## Testing

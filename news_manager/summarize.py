@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import sys
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from news_manager.config import DEFAULT_CONTENT_MAX_CHARS, groq_model
@@ -13,6 +14,14 @@ from news_manager.llm import get_client
 from news_manager.models import OutputArticle, RawArticle
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SummarizeOutcome:
+    """Result of processing one article (for caching and progress)."""
+
+    output: OutputArticle | None
+    outcome: Literal["included", "excluded", "error"]
 
 _JSON_FENCE = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
 
@@ -26,6 +35,14 @@ def _one_line_title(title: str) -> str:
 def _emit_decision(title: str, decision: _Decision) -> None:
     """Progress to stderr so stdout stays free for optional future piping."""
     print(f"[{decision}] {_one_line_title(title)}", file=sys.stderr)
+
+
+def emit_cached_decision(decision: Literal["included", "excluded"], title: str) -> None:
+    """Cache hit: no network/LLM for this article."""
+    print(
+        f"[cached] [{decision}] {_one_line_title(title)}",
+        file=sys.stderr,
+    )
 
 
 def _truncate(text: str, max_chars: int) -> str:
@@ -55,7 +72,7 @@ def _summarize_only(
     category: str,
     instructions: str,
     content_max_chars: int,
-) -> OutputArticle | None:
+) -> SummarizeOutcome:
     """LLM: summaries only (no include/exclude). All articles that succeed are kept."""
     client = get_client()
     model = groq_model()
@@ -103,19 +120,19 @@ Respond with JSON only, using this exact shape:
     except Exception as e:
         logger.warning("Groq API error for %s: %s", article.url, e)
         _emit_decision(title, "error")
-        return None
+        return SummarizeOutcome(output=None, outcome="error")
 
     choice = resp.choices[0].message.content
     if not choice:
         logger.warning("Empty Groq response for %s", article.url)
         _emit_decision(title, "error")
-        return None
+        return SummarizeOutcome(output=None, outcome="error")
 
     data = _parse_json_response(choice)
     if data is None:
         logger.warning("Could not parse JSON from model for %s: %r", article.url, choice[:500])
         _emit_decision(title, "error")
-        return None
+        return SummarizeOutcome(output=None, outcome="error")
 
     short_s = data.get("short_summary", "")
     full_s = data.get("full_summary", "")
@@ -125,7 +142,7 @@ Respond with JSON only, using this exact shape:
         full_s = str(full_s)
 
     _emit_decision(title, "included")
-    return OutputArticle(
+    out = OutputArticle(
         title=article.title,
         date=article.date,
         content=article.content,
@@ -133,19 +150,20 @@ Respond with JSON only, using this exact shape:
         short_summary=short_s.strip(),
         full_summary=full_s.strip(),
     )
+    return SummarizeOutcome(output=out, outcome="included")
 
 
-def filter_and_summarize(
+def filter_and_summarize_outcome(
     article: RawArticle,
     *,
     category: str,
     instructions: str,
     content_max_chars: int = DEFAULT_CONTENT_MAX_CHARS,
     apply_filter: bool = True,
-) -> OutputArticle | None:
+) -> SummarizeOutcome:
     """
-    One LLM call: either filter+summarize, or summarize only (when apply_filter is False).
-    Returns None if the article is excluded (filter mode) or on LLM/parse error.
+    One LLM call: filter+summarize, or summarize only (apply_filter False).
+    Use this when you need included vs excluded vs error (e.g. caching).
     """
     if not apply_filter:
         return _summarize_only(
@@ -206,24 +224,24 @@ If the article does not match what the user wants for this category, set include
     except Exception as e:
         logger.warning("Groq API error for %s: %s", article.url, e)
         _emit_decision(title, "error")
-        return None
+        return SummarizeOutcome(output=None, outcome="error")
 
     choice = resp.choices[0].message.content
     if not choice:
         logger.warning("Empty Groq response for %s", article.url)
         _emit_decision(title, "error")
-        return None
+        return SummarizeOutcome(output=None, outcome="error")
 
     data = _parse_json_response(choice)
     if data is None:
         logger.warning("Could not parse JSON from model for %s: %r", article.url, choice[:500])
         _emit_decision(title, "error")
-        return None
+        return SummarizeOutcome(output=None, outcome="error")
 
     include = data.get("include")
     if include is not True:
         _emit_decision(title, "excluded")
-        return None
+        return SummarizeOutcome(output=None, outcome="excluded")
 
     short_s = data.get("short_summary", "")
     full_s = data.get("full_summary", "")
@@ -233,7 +251,7 @@ If the article does not match what the user wants for this category, set include
         full_s = str(full_s)
 
     _emit_decision(title, "included")
-    return OutputArticle(
+    out = OutputArticle(
         title=article.title,
         date=article.date,
         content=article.content,
@@ -241,3 +259,25 @@ If the article does not match what the user wants for this category, set include
         short_summary=short_s.strip(),
         full_summary=full_s.strip(),
     )
+    return SummarizeOutcome(output=out, outcome="included")
+
+
+def filter_and_summarize(
+    article: RawArticle,
+    *,
+    category: str,
+    instructions: str,
+    content_max_chars: int = DEFAULT_CONTENT_MAX_CHARS,
+    apply_filter: bool = True,
+) -> OutputArticle | None:
+    """
+    One LLM call: either filter+summarize, or summarize only (when apply_filter is False).
+    Returns None if the article is excluded (filter mode) or on LLM/parse error.
+    """
+    return filter_and_summarize_outcome(
+        article,
+        category=category,
+        instructions=instructions,
+        content_max_chars=content_max_chars,
+        apply_filter=apply_filter,
+    ).output

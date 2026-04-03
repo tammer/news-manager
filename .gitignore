@@ -136,6 +136,7 @@ celerybeat.pid
 
 # Local run output
 output.json
+.news-manager-cache.json
 
 # Environments
 .env

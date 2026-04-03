@@ -7,6 +7,7 @@ import logging
 import sys
 from pathlib import Path
 
+from news_manager.cache import DEFAULT_CACHE_PATH, ArticleCache
 from news_manager.config import (
     DEFAULT_CONTENT_MAX_CHARS,
     DEFAULT_HTTP_TIMEOUT,
@@ -72,6 +73,17 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Log INFO to stderr",
     )
+    parser.add_argument(
+        "--cache",
+        type=Path,
+        default=DEFAULT_CACHE_PATH,
+        help=f"JSON cache file for processed articles (default: {DEFAULT_CACHE_PATH})",
+    )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Do not read or write the disk cache",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -98,12 +110,16 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     try:
+        cache: ArticleCache | None = None
+        if not args.no_cache:
+            cache = ArticleCache(args.cache)
         results = run_pipeline(
             categories,
             instructions,
             max_articles=args.max_articles,
             http_timeout=args.timeout,
             content_max_chars=args.content_max_chars,
+            cache=cache,
         )
         write_output(args.output, results)
     except OSError as e:
