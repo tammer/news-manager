@@ -8,6 +8,10 @@ I am interested in **local news for Toronto and Ontario** and **domestic Canadia
 
 I am **not** interested in heavy **geopolitical** stories unless they clearly affect Canada. I am **not** interested in **US politics** (elections, Congress, US parties) except when the story is primarily about the Canada–US relationship or a direct impact on Canada. I am **not** interested in celebrity gossip or pure entertainment unless tied to a substantive Canadian news angle.
 
+I am **not** interested in "experts warn" type articles.  These are articles where one or two experts opine on something and the news outlet tries to turn that into a story.
+
+I am **not** interested in sports news.
+
 ## Science
 
 I am interested in **peer-reviewed research**, **policy-relevant science** (climate, health, space), and clear **explainers** about new studies. I prefer **primary science coverage** over hype or press-release fluff.

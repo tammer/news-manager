@@ -5,9 +5,14 @@
       {
         "url": "https://www.cbc.ca/webfeed/rss/rss-topstories",
         "kind": "rss"
+      },
+      {
+        "url": "https://www.cbc.ca/webfeed/rss/rss-canada-toronto",
+        "kind": "rss"
       }
     ]
   },
+
   {
     "category": "Technology",
     "sources": [
