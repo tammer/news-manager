@@ -66,11 +66,6 @@
         "filter": false
       },
       {
-        "url": "https://importai.substack.com/feed",
-        "kind": "rss",
-        "filter": false
-      },
-      {
         "url": "https://www.a16z.news/feed",
         "kind": "rss",
         "filter": false
