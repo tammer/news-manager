@@ -4,7 +4,7 @@ Use the headings below together with the category names in `sources.json`. The m
 
 ## News
 
-I am interested in **local news for Toronto and Ontario** and **domestic Canadian news** (national politics, economy, society, environment within Canada). I want coverage that helps me understand what is happening in my city, province, and country.
+I am interested in **local news for Toronto and Ontario** and **domestic Canadian news** (national politics, economy, society, environment within Canada). I want coverage that helps me understand what is happening in my city, province, and country. I am not interested in news about fires. I am also not interested in stories about murders or acts of violence.
 
 I am **not** interested in heavy **geopolitical** stories unless they clearly affect Canada. I am **not** interested in **US politics** (elections, Congress, US parties) except when the story is primarily about the Canada–US relationship or a direct impact on Canada. I am **not** interested in celebrity gossip or pure entertainment unless tied to a substantive Canadian news angle.
 
