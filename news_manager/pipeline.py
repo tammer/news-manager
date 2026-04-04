@@ -36,6 +36,8 @@ def run_pipeline(
     """
     For each category, for each source: discover URLs, then for each article either
     use cache, or fetch + filter/summarize. Appends to category.articles; empty categories kept.
+    Within a category, the same normalized URL is only included once (first source wins),
+    matching Supabase's unique (url, category) constraint and avoiding duplicate output rows.
     """
     from news_manager.config import DEFAULT_CONTENT_MAX_CHARS
 
@@ -45,6 +47,7 @@ def run_pipeline(
 
     for sc in categories:
         bucket: list[OutputArticle] = []
+        included_urls: set[str] = set()
         for src in sc.sources:
             source_label = source_base_label(src.url)
             try:
@@ -66,6 +69,8 @@ def run_pipeline(
                     if successes >= max_articles:
                         break
                     nu = normalize_url(url)
+                    if nu in included_urls:
+                        continue
                     label_for_excluded = feed_title or nu
 
                     if cache is not None:
@@ -77,6 +82,7 @@ def run_pipeline(
                                 bucket.append(
                                     replace(cached_article, source=source_label)
                                 )
+                                included_urls.add(nu)
                                 emit_cached_decision(
                                     "included",
                                     cached_article.title,
@@ -107,6 +113,7 @@ def run_pipeline(
                             cache.put(nu, "excluded", None)
                     if outcome.output is not None:
                         bucket.append(outcome.output)
+                        included_urls.add(nu)
         out.append(CategoryResult(category=sc.category, articles=bucket))
 
     if cache is not None:

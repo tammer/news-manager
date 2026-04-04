@@ -126,6 +126,32 @@ def test_sync_category_results_to_supabase_batches_and_upsert_options() -> None:
             assert "liked" not in row
 
 
+def test_sync_category_results_dedupes_duplicate_url_per_category() -> None:
+    client = MagicMock()
+    table = MagicMock()
+    upsert_builder = MagicMock()
+    client.table.return_value = table
+    table.upsert.return_value = upsert_builder
+    upsert_builder.execute.return_value = MagicMock()
+
+    art = OutputArticle(
+        title="T",
+        date=None,
+        content="c",
+        url="https://ex.com/dup",
+        short_summary="s",
+        full_summary="f",
+        source="src",
+    )
+    results = [CategoryResult(category="News", articles=[art, art])]
+    sync_category_results_to_supabase(results, client=client)
+
+    assert table.upsert.call_count == 1
+    batch = table.upsert.call_args_list[0][0][0]
+    assert len(batch) == 1
+    assert batch[0]["url"] == "https://ex.com/dup"
+
+
 def test_sync_category_results_empty_no_upsert() -> None:
     client = MagicMock()
     sync_category_results_to_supabase(

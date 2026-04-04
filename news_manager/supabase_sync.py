@@ -14,6 +14,19 @@ logger = logging.getLogger(__name__)
 _UPSERT_BATCH_SIZE = 75
 
 
+def _dedupe_upsert_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep first row per (url, category); avoids Postgres upsert error 21000 on duplicates."""
+    seen: set[tuple[str, str]] = set()
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        key = (r["url"], r["category"])
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(r)
+    return out
+
+
 def parse_article_date_iso(raw: str | None) -> str | None:
     """
     Parse article date to an ISO 8601 string for timestamptz, or None if unknown.
@@ -82,6 +95,11 @@ def sync_category_results_to_supabase(
 
     if not rows:
         logger.info("No articles to sync to Supabase.")
+        return
+
+    rows = _dedupe_upsert_rows(rows)
+    if not rows:
+        logger.info("No articles to sync to Supabase after deduplication.")
         return
 
     if client is None:
