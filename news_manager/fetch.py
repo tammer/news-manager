@@ -339,14 +339,21 @@ def fetch_articles_for_source(
     HTML: fetch home page, discover same-site links, fetch each article.
     RSS: fetch Atom/RSS feed (e.g. Substack `/feed`), then fetch each entry URL.
     Failures are logged; returns whatever could be fetched.
+    Uses ``cookies/<host>.json`` when present (see thestar_plan.md).
     """
+    from news_manager.cookies_loader import cookie_jar_for_home_url
+
     home_url = normalize_url(home_raw)
     limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
-    with httpx.Client(
-        headers={"User-Agent": USER_AGENT},
-        timeout=timeout,
-        limits=limits,
-    ) as client:
+    jar = cookie_jar_for_home_url(home_raw)
+    client_kw: dict = {
+        "headers": {"User-Agent": USER_AGENT},
+        "timeout": timeout,
+        "limits": limits,
+    }
+    if jar is not None:
+        client_kw["cookies"] = jar
+    with httpx.Client(**client_kw) as client:
         if kind == "rss":
             feed_body = fetch_feed_xml(client, home_url)
             if not feed_body:

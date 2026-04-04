@@ -4,6 +4,24 @@ Fetches configured sources (HTML homepages or **RSS/Atom feeds**), discovers art
 
 Use **RSS feeds** for sites that load listings with JavaScript (for example **Substack**: `https://<publication>.substack.com/feed` instead of the homepage).
 
+### Subscriber cookies (paywalled sites)
+
+Some sites only return full article HTML when the request carries a logged-in session. Export cookies from your browser (for example with a “cookies” browser extension that saves a **JSON array** of cookie objects) and either:
+
+- Put a file at **`cookies/<hostname>.json`** (or `cookies/www.<hostname>.json`) matching the source’s host, for example `cookies/thestar.com.json`, or
+- Set **`"cookies": "path/to/file.json"`** on that source object in `sources.json` (path is relative to the current working directory unless absolute).
+
+Set **`NEWS_MANAGER_COOKIES_DIR`** if you want the default directory to be something other than **`cookies/`** in the cwd. Cookie values are never logged; only the **filename** is mentioned in logs.
+
+To sanity-check a single article URL with the same cookie loading rules as the pipeline:
+
+```bash
+fetch-test --url 'https://example.com/article'
+# optional: --cookies-file path.json --cookies-dir /path/to/dir
+```
+
+Do not commit real cookie files; **`cookies/`** and root **`cookies.json`** are listed in `.gitignore`.
+
 ## Setup
 
 Requires **Python 3.11+**.
@@ -13,9 +31,9 @@ cd news-manager
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
+```
 
 To sync summaries to **Supabase**, also install the extra: `pip install -e ".[supabase]"` (or `news-manager[supabase]`).
-```
 
 Copy `.env.example` to `.env` and set your Groq API key from [Groq Console](https://console.groq.com/):
 

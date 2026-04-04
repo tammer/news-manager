@@ -26,6 +26,7 @@ supabase = ["supabase>=2,<3"]
 [project.scripts]
 news-manager = "news_manager.cli:main"
 to-html = "news_manager.to_html:main"
+fetch-test = "news_manager.fetch_test:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

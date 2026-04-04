@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import logging
+
 import httpx
 
 from news_manager.cache import ArticleCache
 from news_manager.config import DEFAULT_HTTP_TIMEOUT, DEFAULT_MAX_ARTICLES
+from news_manager.cookies_loader import cookie_jar_for_source
 from news_manager.fetch import (
     USER_AGENT,
     discover_article_targets,
@@ -15,7 +18,9 @@ from news_manager.fetch import (
     normalize_url,
     source_base_label,
 )
-from news_manager.models import CategoryResult, SourceCategory
+from news_manager.models import CategoryResult, OutputArticle, SourceCategory
+
+logger = logging.getLogger(__name__)
 from news_manager.summarize import emit_cached_decision, filter_and_summarize_outcome
 
 
@@ -42,11 +47,19 @@ def run_pipeline(
         bucket: list[OutputArticle] = []
         for src in sc.sources:
             source_label = source_base_label(src.url)
-            with httpx.Client(
-                headers={"User-Agent": USER_AGENT},
-                timeout=http_timeout,
-                limits=limits,
-            ) as client:
+            try:
+                jar = cookie_jar_for_source(src)
+            except ValueError as e:
+                logger.error("%s", e)
+                raise
+            client_kw: dict = {
+                "headers": {"User-Agent": USER_AGENT},
+                "timeout": http_timeout,
+                "limits": limits,
+            }
+            if jar is not None:
+                client_kw["cookies"] = jar
+            with httpx.Client(**client_kw) as client:
                 targets = discover_article_targets(client, src.url, kind=src.kind)
                 successes = 0
                 for url, feed_date, feed_title in targets:

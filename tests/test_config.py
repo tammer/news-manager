@@ -93,6 +93,29 @@ def test_read_sources_json_filter_false_per_source(tmp_path: Path) -> None:
     assert cats[0].sources[0].filter is False
 
 
+def test_read_sources_json_cookies_on_source(tmp_path: Path) -> None:
+    p = tmp_path / "sources.json"
+    p.write_text(
+        json.dumps(
+            [
+                {
+                    "category": "X",
+                    "sources": [
+                        {
+                            "url": "https://paywall.example/",
+                            "kind": "html",
+                            "cookies": "secrets/paywall.json",
+                        }
+                    ],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    cats = read_sources_json(p)
+    assert cats[0].sources[0].cookies == "secrets/paywall.json"
+
+
 def test_read_sources_json_filter_must_be_boolean_on_source(tmp_path: Path) -> None:
     p = tmp_path / "sources.json"
     p.write_text(

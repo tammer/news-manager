@@ -11,6 +11,11 @@
         "kind": "rss"
       },
       {
+        "url": "https://www.thestar.com/search/?f=rss&t=article&bl=2827101&l=20",
+        "kind": "rss",
+        "filter": true
+      },
+      {
         "url": "https://www.blogto.com/",
         "kind": "html"
       }

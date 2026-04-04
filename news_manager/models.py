@@ -16,6 +16,8 @@ class Source:
     kind: SourceKind = "html"
     #: If False, every fetched article from this source is summarized and included (no LLM exclude step).
     filter: bool = True
+    #: Optional path to browser cookie export JSON (subscriber sessions); relative to cwd unless absolute.
+    cookies: str | None = None
 
 
 @dataclass

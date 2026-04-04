@@ -73,7 +73,16 @@ def _parse_source_entry(path: Path, i: int, j: int, raw: object) -> Source:
             raise ValueError(
                 f"{path} item {i} sources[{j}] optional 'filter' must be a boolean, got {type(filt).__name__}"
             )
-        return Source(url=u.strip(), kind=skind, filter=filt)
+        cookies_raw = raw.get("cookies")
+        if cookies_raw is not None:
+            if not isinstance(cookies_raw, str) or not cookies_raw.strip():
+                raise ValueError(
+                    f"{path} item {i} sources[{j}] optional 'cookies' must be a non-empty string path"
+                )
+            cookies_s = cookies_raw.strip()
+        else:
+            cookies_s = None
+        return Source(url=u.strip(), kind=skind, filter=filt, cookies=cookies_s)
     raise ValueError(
         f"{path} item {i} sources[{j}] must be a string or an object with 'url' (and optional 'kind', 'filter')"
     )
