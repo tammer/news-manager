@@ -46,6 +46,11 @@
         "filter": false
       },
       {
+        "url": "https://newsletter.pragmaticengineer.com/feed",
+        "kind": "rss",
+        "filter": false
+      },
+      {
         "url": "https://garymarcus.substack.com/feed",
         "kind": "rss",
         "filter": false
