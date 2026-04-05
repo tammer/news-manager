@@ -1,12 +1,34 @@
 """Pipeline orchestration with mocks."""
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from news_manager.cache import ArticleCache
+from news_manager.fetch import normalize_url
 from news_manager.models import OutputArticle, RawArticle, Source, SourceCategory
 from news_manager.pipeline import run_pipeline
 from news_manager.summarize import SummarizeOutcome
+
+
+def _mock_supabase_client(
+    *,
+    news_urls: tuple[str, ...] = (),
+    excl_urls: tuple[str, ...] = (),
+) -> MagicMock:
+    """Prefetch returns normalized URLs; upsert chains succeed by default."""
+    client = MagicMock()
+
+    def table(_name: str) -> MagicMock:
+        t = MagicMock()
+        sel = MagicMock()
+        urls = news_urls if _name == "news_articles" else excl_urls
+        sel.execute.return_value = MagicMock(data=[{"url": u} for u in urls])
+        t.select.return_value.eq.return_value = sel
+        up = MagicMock()
+        up.execute.return_value = MagicMock()
+        t.upsert.return_value = up
+        return t
+
+    client.table.side_effect = table
+    return client
 
 
 @patch("news_manager.pipeline.filter_and_summarize_outcome")
@@ -27,7 +49,14 @@ def test_run_pipeline_keeps_empty_category(
         SourceCategory(category="News", sources=[Source(url="a.com", filter=True)]),
         SourceCategory(category="Science", sources=[Source(url="b.com", filter=True)]),
     ]
-    out = run_pipeline(cats, instructions="x", max_articles=5, http_timeout=1.0)
+    sb = _mock_supabase_client()
+    out = run_pipeline(
+        cats,
+        instructions="x",
+        supabase_client=sb,
+        max_articles=5,
+        http_timeout=1.0,
+    )
     assert len(out) == 2
     assert out[0].category == "News"
     assert out[0].articles == []
@@ -61,7 +90,14 @@ def test_run_pipeline_includes_summarized(
     )
 
     cats = [SourceCategory(category="News", sources=[Source(url="a.com", filter=True)])]
-    out = run_pipeline(cats, instructions="x", max_articles=5, http_timeout=1.0)
+    sb = _mock_supabase_client()
+    out = run_pipeline(
+        cats,
+        instructions="x",
+        supabase_client=sb,
+        max_articles=5,
+        http_timeout=1.0,
+    )
     assert len(out[0].articles) == 1
     assert out[0].articles[0].short_summary == "s"
     assert out[0].articles[0].source == "a.com"
@@ -103,7 +139,14 @@ def test_run_pipeline_dedupes_same_url_across_sources(
             ],
         )
     ]
-    out = run_pipeline(cats, instructions="x", max_articles=5, http_timeout=1.0)
+    sb = _mock_supabase_client()
+    out = run_pipeline(
+        cats,
+        instructions="x",
+        supabase_client=sb,
+        max_articles=5,
+        http_timeout=1.0,
+    )
     assert len(out[0].articles) == 1
     assert out[0].articles[0].source == "a.com"
     assert mock_fetch_one.call_count == 1
@@ -140,7 +183,14 @@ def test_run_pipeline_apply_filter_false(
             sources=[Source(url="a.com", filter=False)],
         )
     ]
-    run_pipeline(cats, instructions="x", max_articles=5, http_timeout=1.0)
+    sb = _mock_supabase_client()
+    run_pipeline(
+        cats,
+        instructions="x",
+        supabase_client=sb,
+        max_articles=5,
+        http_timeout=1.0,
+    )
     assert mock_outcome.call_args.kwargs["apply_filter"] is False
     assert mock_outcome.call_args.kwargs["source"] == "a.com"
 
@@ -148,25 +198,25 @@ def test_run_pipeline_apply_filter_false(
 @patch("news_manager.pipeline.filter_and_summarize_outcome")
 @patch("news_manager.pipeline.fetch_single_raw_article")
 @patch("news_manager.pipeline.discover_article_targets")
-def test_run_pipeline_second_run_uses_cache_no_fetch(
+def test_run_pipeline_skips_url_already_in_news_articles(
     mock_discover: MagicMock,
     mock_fetch: MagicMock,
     mock_outcome: MagicMock,
-    tmp_path: Path,
 ) -> None:
-    mock_discover.return_value = [("https://example.com/post/1", None, "Post title")]
+    url = "https://example.com/post/1"
+    mock_discover.return_value = [(url, None, "Post title")]
     mock_fetch.return_value = RawArticle(
         title="T",
         date=None,
         content="c " * 200,
-        url="https://example.com/post/1",
+        url=url,
     )
     mock_outcome.return_value = SummarizeOutcome(
         output=OutputArticle(
             title="T",
             date=None,
             content="c",
-            url="https://example.com/post/1",
+            url=url,
             short_summary="s",
             full_summary="f",
             source="feed",
@@ -179,23 +229,13 @@ def test_run_pipeline_second_run_uses_cache_no_fetch(
             sources=[Source(url="https://feed", kind="rss", filter=True)],
         )
     ]
-    cache_path = tmp_path / "cache.json"
+    sb = _mock_supabase_client(news_urls=(normalize_url(url),))
     run_pipeline(
         cats,
         instructions="same",
+        supabase_client=sb,
         max_articles=5,
         http_timeout=1.0,
-        cache=ArticleCache(cache_path),
-    )
-    assert mock_fetch.call_count == 1
-    mock_fetch.reset_mock()
-    mock_outcome.reset_mock()
-    run_pipeline(
-        cats,
-        instructions="same",
-        max_articles=5,
-        http_timeout=1.0,
-        cache=ArticleCache(cache_path),
     )
     assert mock_fetch.call_count == 0
     assert mock_outcome.call_count == 0

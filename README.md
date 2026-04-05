@@ -33,13 +33,13 @@ source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 ```
 
-To sync summaries to **Supabase**, also install the extra: `pip install -e ".[supabase]"` (or `news-manager[supabase]`).
-
-Copy `.env.example` to `.env` and set your Groq API key from [Groq Console](https://console.groq.com/):
+Copy `.env.example` to `.env` and set your Groq API key from [Groq Console](https://console.groq.com/) plus **Supabase** credentials (see below):
 
 ```text
 GROQ_API_KEY=your_key_here
 GROQ_MODEL=llama-3.3-70b-versatile
+SUPABASE_URL=https://xxxx.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=...
 ```
 
 ## Usage
@@ -47,7 +47,7 @@ GROQ_MODEL=llama-3.3-70b-versatile
 Create `sources.json` and `instructions.md` (see [plan.md](plan.md)), then:
 
 ```bash
-news-manager --sources sources.json --instructions instructions.md --output output.json
+news-manager --sources sources.json --instructions instructions.md
 ```
 
 Or:
@@ -56,38 +56,22 @@ Or:
 python -m news_manager --sources sources.json --instructions instructions.md
 ```
 
-Default output path is `output.json` in the current working directory.
+Every run **requires** Supabase: URLs already present in **`news_articles`** or **`news_article_exclusions`** for that category are skipped (no fetch, no LLM). New work is written **incrementally** (one upsert per included article or excluded URL). Failed upserts are reported on stdout and are **not** retried.
 
-While each article is processed, a line is written to **stderr** (independent of `-v` logging):
+1. In the Supabase SQL editor, run [`sql/news_articles.sql`](sql/news_articles.sql) and [`sql/news_article_exclusions.sql`](sql/news_article_exclusions.sql).
+2. Set **`SUPABASE_URL`** and **`SUPABASE_SERVICE_ROLE_KEY`** in `.env` (see [`.env.example`](.env.example)). Treat the service role key like a password — it bypasses Row Level Security.
 
-| Situation | stderr line shape |
-|-----------|-------------------|
-| **From disk cache** (no article fetch, no Groq) | `[cached] [included] Title` or `[cached] [excluded] Title` |
-| **Fresh run** (fetched page + LLM) | `[included] Title`, `[excluded] Title`, or `[error] Title` if the LLM call failed or the response could not be parsed |
+Included rows use natural key **`(url, category)`**; summary fields are refreshed on conflict. **`read`** and **`liked`** are not sent so existing values stay intact. Excluded URLs are stored in **`news_article_exclusions`** so repeat runs skip them without calling the LLM.
 
-If a line **starts with `[cached]`**, the result was loaded from the cache; otherwise it was just computed.
+### Stdout progress lines
 
-### Disk cache
+For each article URL the tool prints a short **multi-line block** to **stdout** (see [`news_manager/run_report.py`](news_manager/run_report.py)):
 
-By default, processed articles are stored in **`.news-manager-cache.json`** in the current working directory (JSON map keyed by **normalized article URL only**). If you run again and the same URL appears, it is **not** re-fetched or re-summarized.
+- **Already in `news_articles`:** URL, then `Already in database`.
+- **Already in exclusions:** URL, then `Already excluded`.
+- **Processed this run:** URL, then category, then `success included`, `success excluded`, or `failure: …` (for example a Supabase error or LLM/parse failure).
 
-- Change location: `--cache /path/to/cache.json`
-- Disable: `--no-cache`
-
-Changing `instructions.md`, category, or `filter` does **not** change the cache key. To pick up new wording or stricter filtering for URLs already cached, use **`--no-cache`** or delete the cache file.
-
-### Supabase (`--write-supabase`)
-
-Optional: after a successful run, **upsert** every included article into a Supabase table **`news_articles`** (natural key `(url, category)`). Summary fields are refreshed on repeat runs; **`read`** and **`liked`** are not sent in the payload so existing values stay intact.
-
-1. In the Supabase dashboard, run the SQL in [`sql/news_articles.sql`](sql/news_articles.sql).
-2. Install the extra: `pip install "news-manager[supabase]"`.
-3. Set **`SUPABASE_URL`** and **`SUPABASE_SERVICE_ROLE_KEY`** in `.env` (see [`.env.example`](.env.example)). Treat the service role key like a password — it bypasses Row Level Security.
-4. Run with **`--write-supabase`** (after `--output` is written as usual).
-
-Exit code **`2`** means Supabase sync failed (exit **`1`** is used for config / I/O / pipeline errors).
-
-Details: [database_plan.md](database_plan.md).
+With **`-v`**, INFO logs still go to **stderr**.
 
 ### `sources.json` format
 
@@ -122,24 +106,10 @@ Example:
 |------|-------------|
 | `--sources` | Path to `sources.json` (required) |
 | `--instructions` | Path to `instructions.md` (required) |
-| `--output` | Output JSON path (default: `output.json`) |
 | `--max-articles` | Max articles to fetch per source (default: 15) |
 | `--timeout` | HTTP timeout in seconds (default: 30) |
 | `--content-max-chars` | Max characters of article body sent to the LLM (default: 12000) |
-| `--cache` | Path to JSON cache file (default: `.news-manager-cache.json`) |
-| `--no-cache` | Do not read or write the cache |
-| `--write-supabase` | Upsert articles to Supabase after writing JSON (requires `[supabase]` + env vars) |
 | `-v`, `--verbose` | INFO logging to stderr |
-
-### Export to HTML
-
-After you have `output.json`, generate static pages (one file per category plus `index.html`):
-
-```bash
-to-html --input output.json --output-dir html
-```
-
-Open `html/index.html` in a browser. Options: `-i` / `--input` (default `output.json`), `-o` / `--output-dir` (default `html`). Each article’s **`source`** field is the hostname of that row’s configured source (for example `nextbigthing.substack.com`); generated pages show it in the meta line under the title.
 
 ## Testing
 

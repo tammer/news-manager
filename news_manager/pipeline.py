@@ -1,14 +1,12 @@
-"""Orchestrate fetch → summarize → category results."""
+"""Orchestrate fetch → summarize → incremental Supabase writes."""
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 import logging
+from typing import Any
 
 import httpx
 
-from news_manager.cache import ArticleCache
 from news_manager.config import DEFAULT_HTTP_TIMEOUT, DEFAULT_MAX_ARTICLES
 from news_manager.cookies_loader import cookie_jar_for_source
 from news_manager.fetch import (
@@ -19,25 +17,34 @@ from news_manager.fetch import (
     source_base_label,
 )
 from news_manager.models import CategoryResult, OutputArticle, SourceCategory
+from news_manager.run_report import (
+    report_already_excluded,
+    report_already_in_articles,
+    report_processed,
+)
+from news_manager.supabase_sync import (
+    prefetch_processed_urls_for_category,
+    upsert_excluded_url,
+    upsert_included_article,
+)
+from news_manager.summarize import filter_and_summarize_outcome
 
 logger = logging.getLogger(__name__)
-from news_manager.summarize import emit_cached_decision, filter_and_summarize_outcome
 
 
 def run_pipeline(
     categories: list[SourceCategory],
     instructions: str,
     *,
+    supabase_client: Any,
     max_articles: int = DEFAULT_MAX_ARTICLES,
     http_timeout: float = DEFAULT_HTTP_TIMEOUT,
     content_max_chars: int | None = None,
-    cache: ArticleCache | None = None,
 ) -> list[CategoryResult]:
     """
-    For each category, for each source: discover URLs, then for each article either
-    use cache, or fetch + filter/summarize. Appends to category.articles; empty categories kept.
-    Within a category, the same normalized URL is only included once (first source wins),
-    matching Supabase's unique (url, category) constraint and avoiding duplicate output rows.
+    For each category, prefetch ``news_articles`` / ``news_article_exclusions`` URLs,
+    then for each source discover targets and process each URL (skip if already known).
+    Same normalized URL is only processed once per category (first source wins).
     """
     from news_manager.config import DEFAULT_CONTENT_MAX_CHARS
 
@@ -47,7 +54,11 @@ def run_pipeline(
 
     for sc in categories:
         bucket: list[OutputArticle] = []
-        included_urls: set[str] = set()
+        urls_done_this_category: set[str] = set()
+        db_included, db_excluded = prefetch_processed_urls_for_category(
+            supabase_client, sc.category
+        )
+
         for src in sc.sources:
             source_label = source_base_label(src.url)
             try:
@@ -69,31 +80,21 @@ def run_pipeline(
                     if successes >= max_articles:
                         break
                     nu = normalize_url(url)
-                    if nu in included_urls:
+                    if nu in urls_done_this_category:
                         continue
-                    label_for_excluded = feed_title or nu
 
-                    if cache is not None:
-                        hit = cache.lookup(nu)
-                        if hit is not None:
-                            status, cached_article = hit
-                            successes += 1
-                            if status == "included" and cached_article is not None:
-                                bucket.append(
-                                    replace(cached_article, source=source_label)
-                                )
-                                included_urls.add(nu)
-                                emit_cached_decision(
-                                    "included",
-                                    cached_article.title,
-                                )
-                            else:
-                                emit_cached_decision("excluded", label_for_excluded)
-                            continue
+                    if nu in db_included:
+                        report_already_in_articles(nu)
+                        urls_done_this_category.add(nu)
+                        successes += 1
+                        continue
+                    if nu in db_excluded:
+                        report_already_excluded(nu)
+                        urls_done_this_category.add(nu)
+                        successes += 1
+                        continue
 
-                    raw = fetch_single_raw_article(
-                        client, nu, feed_date, feed_title
-                    )
+                    raw = fetch_single_raw_article(client, nu, feed_date, feed_title)
                     if raw is None:
                         continue
                     successes += 1
@@ -105,17 +106,39 @@ def run_pipeline(
                         content_max_chars=cm,
                         apply_filter=src.filter,
                         source=source_label,
+                        emit_stderr=False,
                     )
-                    if cache is not None:
-                        if outcome.outcome == "included" and outcome.output is not None:
-                            cache.put(nu, "included", outcome.output)
-                        elif outcome.outcome == "excluded":
-                            cache.put(nu, "excluded", None)
-                    if outcome.output is not None:
-                        bucket.append(outcome.output)
-                        included_urls.add(nu)
+
+                    if outcome.outcome == "included" and outcome.output is not None:
+                        err = upsert_included_article(
+                            supabase_client, sc.category, outcome.output
+                        )
+                        if err:
+                            report_processed(nu, sc.category, False, err)
+                        else:
+                            bucket.append(outcome.output)
+                            report_processed(
+                                nu, sc.category, True, result="included"
+                            )
+                        urls_done_this_category.add(nu)
+                    elif outcome.outcome == "excluded":
+                        err = upsert_excluded_url(supabase_client, nu, sc.category)
+                        if err:
+                            report_processed(nu, sc.category, False, err)
+                        else:
+                            report_processed(
+                                nu, sc.category, True, result="excluded"
+                            )
+                            db_excluded.add(nu)
+                        urls_done_this_category.add(nu)
+                    else:
+                        report_processed(
+                            nu,
+                            sc.category,
+                            False,
+                            "LLM or parse error",
+                        )
+
         out.append(CategoryResult(category=sc.category, articles=bucket))
 
-    if cache is not None:
-        cache.save()
     return out

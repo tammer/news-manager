@@ -2,9 +2,9 @@
 
 ## Purpose
 
-Expose a **small Flask HTTP service** with one job: **kick off** the same work the CLI does—fetch sources, summarize with Groq, write `output.json`, and **upsert to Supabase**—then **return right away**. The client does **not** wait for completion, poll status, or receive a `job_id`. When the run finishes (success or failure), the server **logs** the outcome; there is **no HTTP API** for progress or results.
+Expose a **small Flask HTTP service** with one job: **kick off** the same work the CLI does—fetch sources, summarize with Groq, and **incrementally sync to Supabase** (`news_articles` and `news_article_exclusions`)—then **return right away**. The client does **not** wait for completion, poll status, or receive a `job_id`. When the run finishes (success or failure), the server **logs** the outcome; there is **no HTTP API** for progress or results.
 
-This document is the **product / behavior spec** for that API. Implementation should **reuse** the same Python entrypoints the CLI uses ([`news_manager/cli.py`](news_manager/cli.py), pipeline, `write_output`, [`news_manager/supabase_sync.py`](news_manager/supabase_sync.py)), not spawn a subprocess, unless you have a strong reason otherwise.
+This document is the **product / behavior spec** for that API. Implementation should **reuse** the same Python entrypoints the CLI uses ([`news_manager/cli.py`](news_manager/cli.py), [`run_pipeline`](news_manager/pipeline.py), [`news_manager/supabase_sync.py`](news_manager/supabase_sync.py)), not spawn a subprocess, unless you have a strong reason otherwise.
 
 ---
 
@@ -15,18 +15,16 @@ The background run should match:
 ```bash
 news-manager \
   --sources sources.json \
-  --instructions instructions.md \
-  --output output.json \
-  --write-supabase
+  --instructions instructions.md
 ```
 
 Notes:
 
 - The installed command is **`news-manager`** (see [`pyproject.toml`](pyproject.toml)); equivalent via `python -m news_manager` with the same arguments.
-- **`--write-supabase`** requires `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and the optional **`supabase`** extra ([`database_plan.md`](database_plan.md)).
+- **`SUPABASE_URL`** and **`SUPABASE_SERVICE_ROLE_KEY`** are required for every run, same as the CLI ([`database_plan.md`](database_plan.md)).
 - **`GROQ_API_KEY`** (and optional `GROQ_MODEL`) are required for the pipeline, same as the CLI.
 
-Paths (`sources.json`, `instructions.md`, `output.json`) can be **fixed in config/env** for v1.
+Paths (`sources.json`, `instructions.md`) can be **fixed in config/env** for v1.
 
 ---
 
@@ -43,11 +41,11 @@ A full run can take **many minutes**. The API **must not** block the HTTP respon
 
 1. **`POST /run`** checks auth (and optional lightweight validation).
 2. It **starts the pipeline in a background thread or worker** (implementation choice: `threading`, `concurrent.futures`, etc.) and **returns immediately**.
-3. Success or failure of the run is handled **only in server logs** (and side effects: `output.json`, Supabase). The client is not notified over HTTP.
+3. Success or failure of the run is handled **only in server logs** (and side effects: Supabase). The client is not notified over HTTP.
 
 **Response:** **`202 Accepted`** with a minimal body, e.g. `{}` or `{ "accepted": true }`. No `job_id`, no polling contract.
 
-**Concurrency:** Document whether only **one run at a time** is allowed (recommended for v1—avoids overlapping Groq load and clobbering `output.json`) or overlapping runs are permitted.
+**Concurrency:** Document whether only **one run at a time** is allowed (recommended for v1—avoids overlapping Groq load and duplicate work against Supabase) or overlapping runs are permitted.
 
 ---
 
@@ -82,7 +80,7 @@ Same as the CLI where applicable:
 
 - `GROQ_API_KEY`, optional `GROQ_MODEL`
 - Supabase: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`
-- Paths and flags: `--sources`, `--instructions`, `--output`, `--cache`, `--no-cache`, `--max-articles`, etc., via env or config file
+- Paths and flags: `--sources`, `--instructions`, `--max-articles`, etc., via env or config file
 
 ---
 
@@ -107,6 +105,6 @@ Same as the CLI where applicable:
 - [ ] Flask app + production WSGI notes (e.g. gunicorn).
 - [ ] Auth on **`POST /run`** only.
 - [ ] Background execution: return **202** before pipeline starts or as soon as the worker is scheduled; **log** completion and errors.
-- [ ] Reuse pipeline + `write_output` + `sync_category_results_to_supabase` inside the worker.
+- [ ] Reuse `create_supabase_client` + `run_pipeline` inside the worker (same incremental Supabase behavior as the CLI).
 - [ ] Document env vars, single-flight vs overlapping runs, and **fire-and-forget** semantics in README.
 - [ ] Optional dependency group if Flask is not part of the default install.

@@ -108,14 +108,14 @@ def groq_model() -> str:
 
 def supabase_settings() -> tuple[str, str]:
     """
-    URL and service role key for Supabase REST (--write-supabase).
+    URL and service role key for Supabase REST (required for every CLI run).
     Raises ValueError if either is missing or blank.
     """
     url = os.environ.get("SUPABASE_URL", "").strip()
     key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
     if not url or not key:
         raise ValueError(
-            "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set when using "
-            "--write-supabase. Add them to your environment or .env file."
+            "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set. "
+            "Add them to your environment or .env file."
         )
     return url, key

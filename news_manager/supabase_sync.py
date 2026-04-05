@@ -1,4 +1,4 @@
-"""Upsert pipeline results to Supabase news_articles (see database_plan.md)."""
+"""Supabase incremental sync: news_articles + news_article_exclusions (see cache_change_plan.md)."""
 
 from __future__ import annotations
 
@@ -7,24 +7,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 from news_manager.config import supabase_settings
-from news_manager.models import CategoryResult, OutputArticle
+from news_manager.fetch import normalize_url
+from news_manager.models import OutputArticle
 
 logger = logging.getLogger(__name__)
-
-_UPSERT_BATCH_SIZE = 75
-
-
-def _dedupe_upsert_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Keep first row per (url, category); avoids Postgres upsert error 21000 on duplicates."""
-    seen: set[tuple[str, str]] = set()
-    out: list[dict[str, Any]] = []
-    for r in rows:
-        key = (r["url"], r["category"])
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(r)
-    return out
 
 
 def parse_article_date_iso(raw: str | None) -> str | None:
@@ -66,60 +52,88 @@ def output_article_to_upsert_row(category: str, article: OutputArticle) -> dict[
     return row
 
 
-def _default_supabase_client() -> Any:
+def create_supabase_client() -> Any:
+    """Service-role Supabase client (required for every CLI run)."""
     try:
         from supabase import create_client
     except ImportError as e:
         raise RuntimeError(
-            'The "supabase" package is required for --write-supabase. '
-            'Install with: pip install "news-manager[supabase]"'
+            'The "supabase" package is required. Install with: pip install "news-manager"'
         ) from e
     url, key = supabase_settings()
     return create_client(url, key)
 
 
-def sync_category_results_to_supabase(
-    results: list[CategoryResult],
-    *,
-    client: Any | None = None,
-    batch_size: int = _UPSERT_BATCH_SIZE,
-) -> None:
+def prefetch_processed_urls_for_category(client: Any, category: str) -> tuple[set[str], set[str]]:
     """
-    Upsert all included articles. Batched. Does not send read/liked so flags survive re-runs.
+    Return (urls in news_articles, urls in news_article_exclusions) for this category,
+    keyed by normalize_url(...) for comparison with pipeline URLs.
     """
-    rows: list[dict[str, Any]] = []
-    for block in results:
-        cat = block.category
-        for article in block.articles:
-            rows.append(output_article_to_upsert_row(cat, article))
+    in_articles: set[str] = set()
+    in_exclusions: set[str] = set()
+    try:
+        r1 = (
+            client.table("news_articles")
+            .select("url")
+            .eq("category", category)
+            .execute()
+        )
+        for row in r1.data or []:
+            u = row.get("url")
+            if isinstance(u, str) and u.strip():
+                in_articles.add(normalize_url(u))
+        r2 = (
+            client.table("news_article_exclusions")
+            .select("url")
+            .eq("category", category)
+            .execute()
+        )
+        for row in r2.data or []:
+            u = row.get("url")
+            if isinstance(u, str) and u.strip():
+                in_exclusions.add(normalize_url(u))
+    except Exception as e:
+        raise RuntimeError(f"Supabase prefetch failed for category {category!r}: {e}") from e
+    return in_articles, in_exclusions
 
-    if not rows:
-        logger.info("No articles to sync to Supabase.")
-        return
 
-    rows = _dedupe_upsert_rows(rows)
-    if not rows:
-        logger.info("No articles to sync to Supabase after deduplication.")
-        return
-
-    if client is None:
-        client = _default_supabase_client()
-
-    for i in range(0, len(rows), batch_size):
-        batch = rows[i : i + batch_size]
-        try:
-            (
-                client.table("news_articles")
-                .upsert(
-                    batch,
-                    on_conflict="url,category",
-                    default_to_null=False,
-                )
-                .execute()
+def upsert_included_article(
+    client: Any,
+    category: str,
+    article: OutputArticle,
+) -> str | None:
+    """
+    Single upsert to news_articles. Returns None on success, or an error message string.
+    """
+    row = output_article_to_upsert_row(category, article)
+    try:
+        (
+            client.table("news_articles")
+            .upsert(
+                [row],
+                on_conflict="url,category",
+                default_to_null=False,
             )
-        except Exception as e:
-            raise RuntimeError(
-                f"Supabase upsert failed (batch starting at index {i}): {e}"
-            ) from e
+            .execute()
+        )
+    except Exception as e:
+        return f"Supabase upsert: {e}"
+    return None
 
-    logger.info("Synced %d article row(s) to Supabase.", len(rows))
+
+def upsert_excluded_url(client: Any, url: str, category: str) -> str | None:
+    """
+    Record an excluded URL. Returns None on success, or an error message string.
+    """
+    try:
+        (
+            client.table("news_article_exclusions")
+            .upsert(
+                [{"url": url, "category": category}],
+                on_conflict="url,category",
+            )
+            .execute()
+        )
+    except Exception as e:
+        return f"Supabase exclusion insert: {e}"
+    return None

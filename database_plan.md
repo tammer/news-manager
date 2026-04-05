@@ -174,41 +174,31 @@ on conflict (url, category) do update set
 
 ---
 
-## 7. CLI specification
+## 7. CLI specification (current)
 
-### 7.1 New flag
+### 7.1 Supabase always on
 
-- **`--write-supabase`** (boolean, default off)  
-  After `write_output(...)`, for each `OutputArticle` in `results`, perform upsert to Supabase.
-
-Optional companion:
-
-- **`--supabase-only`** (optional, advanced): skip file output and only write DB — out of scope unless you need it; v1 can require `--output` as today and always write JSON unless you add this later.
+- Every CLI run **requires** `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (validated before the pipeline starts).
+- There is **no** disk cache, **`--output`**, or end-of-run batch sync: the pipeline **prefetches** existing URLs per category from **`news_articles`** and **`news_article_exclusions`**, skips work for those URLs, and performs **one upsert per** newly included article or newly excluded URL. Failed upserts are reported on stdout and are **not** retried automatically.
 
 ### 7.2 Environment variables
 
-| Variable | Required when `--write-supabase` | Meaning |
-|----------|----------------------------------|---------|
+| Variable | Required | Meaning |
+|----------|----------|---------|
 | `SUPABASE_URL` | yes | Project URL, e.g. `https://xxxx.supabase.co` |
-| `SUPABASE_SERVICE_ROLE_KEY` | yes* | Server-side key with rights to bypass RLS for batch upserts. |
+| `SUPABASE_SERVICE_ROLE_KEY` | yes* | Server-side key with rights to bypass RLS for upserts. |
 | `SUPABASE_DB_URL` | alternative | Direct Postgres connection string (if using `psycopg` instead of HTTP). |
 
 \*For a **locked-down** project using RLS and anon key only, specify a policy + use anon key with a dedicated role — not required for v1 if service role is acceptable for a trusted local CLI.
 
-### 7.3 Behavior
+### 7.3 Tables
 
-1. If `--write-supabase` is set, validate env vars before starting the expensive pipeline (fail fast).
-2. Run pipeline as today; write `output.json` as today.
-3. Walk `results` (`list[CategoryResult]`): for each `(category, articles)`, upsert every `OutputArticle` with that **`category`** string (same order as `output.json`). If the same `(url, category)` appears twice in one run (unusual), **last write wins** for summary fields within the batch.
-4. Batch upserts (e.g. chunks of 50–100) to reduce round-trips.
-5. On first unrecoverable error, log to stderr, exit non-zero (define: `1` config, `2` DB error optional).
+- **`news_articles`**: included articles (SQL in §5 / `sql/news_articles.sql`).
+- **`news_article_exclusions`**: URLs the LLM excluded for a category (`sql/news_article_exclusions.sql`), natural key `(url, category)`.
 
 ### 7.4 Dependencies
 
-- Either official **`supabase-py`** with `service_role` and `.table('news_articles').upsert(...)` (verify upsert respects partial updates), or  
-- **`psycopg`** / **`asyncpg`** with the SQL in §6.
-
-Document the chosen client in `README.md` when implemented.
+- Official **`supabase-py`** with `service_role` and `.table(...).upsert(...)` (core dependency; see `README.md`).
 
 ---
 
@@ -228,11 +218,11 @@ Document the chosen client in `README.md` when implemented.
 
 ## 10. Checklist for implementation
 
-- [ ] Create table with SQL in §5 (plus optional trigger).
-- [ ] Add `--write-supabase` and env validation to `news_manager/cli.py`.
-- [ ] Implement `news_manager/supabase_sync.py` (or similar): date parsing, upsert loop, error handling.
-- [ ] Document env vars and flag in `README.md`; add `.env.example` keys (no real secrets).
-- [ ] Add tests with mocks.
+- [x] Create `news_articles` with SQL in §5 (plus optional trigger).
+- [x] Create `news_article_exclusions` (`sql/news_article_exclusions.sql`).
+- [x] Require Supabase env vars in `news_manager/cli.py`; incremental sync in `news_manager/supabase_sync.py` + `run_pipeline`.
+- [x] Document env vars in `README.md` and `.env.example` (no real secrets).
+- [x] Tests with mocked Supabase client.
 
 ---
 

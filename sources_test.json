@@ -1,11 +1,19 @@
 [
   {
-    "category": "books",
+    "category": "News",
     "sources": [
       {
-        "url": "https://apnews.com/hub/book-reviews",
-        "kind": "html",
-        "filter": false
+        "url": "https://www.cbc.ca/webfeed/rss/rss-topstories",
+        "kind": "rss"
+      },
+      {
+        "url": "https://www.cbc.ca/webfeed/rss/rss-canada-toronto",
+        "kind": "rss"
+      },
+      {
+        "url": "https://www.thestar.com/search/?f=rss&t=article&bl=2827101&l=20",
+        "kind": "rss",
+        "filter": true
       }
     ]
   }

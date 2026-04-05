@@ -7,7 +7,6 @@ import pytest
 
 from news_manager.config import read_instructions, read_sources_json
 from news_manager.models import CategoryResult, OutputArticle, Source
-from news_manager.output import write_output
 
 
 def test_read_sources_json_valid(tmp_path: Path) -> None:
@@ -153,7 +152,11 @@ def test_merge_category_output_roundtrip(tmp_path: Path) -> None:
         CategoryResult(category="B", articles=[]),
     ]
     path = tmp_path / "out.json"
-    write_output(path, out)
+    data_wr = [c.to_json_dict() for c in out]
+    path.write_text(
+        json.dumps(data_wr, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data[0]["category"] == "A"
     assert len(data[0]["articles"]) == 1

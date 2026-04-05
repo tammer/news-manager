@@ -37,8 +37,13 @@ def _emit_decision(title: str, decision: _Decision) -> None:
     print(f"[{decision}] {_one_line_title(title)}", file=sys.stderr)
 
 
+def _maybe_emit_stderr(emit_stderr: bool, title: str, decision: _Decision) -> None:
+    if emit_stderr:
+        _emit_decision(title, decision)
+
+
 def emit_cached_decision(decision: Literal["included", "excluded"], title: str) -> None:
-    """Cache hit: no network/LLM for this article."""
+    """Deprecated: disk cache removed; kept for any external callers."""
     print(
         f"[cached] [{decision}] {_one_line_title(title)}",
         file=sys.stderr,
@@ -73,6 +78,7 @@ def _summarize_only(
     instructions: str,
     content_max_chars: int,
     source: str,
+    emit_stderr: bool = True,
 ) -> SummarizeOutcome:
     """LLM: summaries only (no include/exclude). All articles that succeed are kept."""
     client = get_client()
@@ -120,19 +126,19 @@ Respond with JSON only, using this exact shape:
         )
     except Exception as e:
         logger.warning("Groq API error for %s: %s", article.url, e)
-        _emit_decision(title, "error")
+        _maybe_emit_stderr(emit_stderr, title, "error")
         return SummarizeOutcome(output=None, outcome="error")
 
     choice = resp.choices[0].message.content
     if not choice:
         logger.warning("Empty Groq response for %s", article.url)
-        _emit_decision(title, "error")
+        _maybe_emit_stderr(emit_stderr, title, "error")
         return SummarizeOutcome(output=None, outcome="error")
 
     data = _parse_json_response(choice)
     if data is None:
         logger.warning("Could not parse JSON from model for %s: %r", article.url, choice[:500])
-        _emit_decision(title, "error")
+        _maybe_emit_stderr(emit_stderr, title, "error")
         return SummarizeOutcome(output=None, outcome="error")
 
     short_s = data.get("short_summary", "")
@@ -142,7 +148,7 @@ Respond with JSON only, using this exact shape:
     if not isinstance(full_s, str):
         full_s = str(full_s)
 
-    _emit_decision(title, "included")
+    _maybe_emit_stderr(emit_stderr, title, "included")
     out = OutputArticle(
         title=article.title,
         date=article.date,
@@ -163,6 +169,7 @@ def filter_and_summarize_outcome(
     content_max_chars: int = DEFAULT_CONTENT_MAX_CHARS,
     apply_filter: bool = True,
     source: str = "",
+    emit_stderr: bool = True,
 ) -> SummarizeOutcome:
     """
     One LLM call: filter+summarize, or summarize only (apply_filter False).
@@ -175,6 +182,7 @@ def filter_and_summarize_outcome(
             instructions=instructions,
             content_max_chars=content_max_chars,
             source=source,
+            emit_stderr=emit_stderr,
         )
 
     client = get_client()
@@ -227,24 +235,24 @@ If the article does not match what the user wants for this category, set include
         )
     except Exception as e:
         logger.warning("Groq API error for %s: %s", article.url, e)
-        _emit_decision(title, "error")
+        _maybe_emit_stderr(emit_stderr, title, "error")
         return SummarizeOutcome(output=None, outcome="error")
 
     choice = resp.choices[0].message.content
     if not choice:
         logger.warning("Empty Groq response for %s", article.url)
-        _emit_decision(title, "error")
+        _maybe_emit_stderr(emit_stderr, title, "error")
         return SummarizeOutcome(output=None, outcome="error")
 
     data = _parse_json_response(choice)
     if data is None:
         logger.warning("Could not parse JSON from model for %s: %r", article.url, choice[:500])
-        _emit_decision(title, "error")
+        _maybe_emit_stderr(emit_stderr, title, "error")
         return SummarizeOutcome(output=None, outcome="error")
 
     include = data.get("include")
     if include is not True:
-        _emit_decision(title, "excluded")
+        _maybe_emit_stderr(emit_stderr, title, "excluded")
         return SummarizeOutcome(output=None, outcome="excluded")
 
     short_s = data.get("short_summary", "")
@@ -254,7 +262,7 @@ If the article does not match what the user wants for this category, set include
     if not isinstance(full_s, str):
         full_s = str(full_s)
 
-    _emit_decision(title, "included")
+    _maybe_emit_stderr(emit_stderr, title, "included")
     out = OutputArticle(
         title=article.title,
         date=article.date,
