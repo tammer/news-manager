@@ -215,3 +215,5 @@ html/
 # Subscriber browser cookie exports (never commit)
 cookies/
 cookies.json
+
+.DS_Store
