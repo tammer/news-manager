@@ -86,11 +86,6 @@
         "filter": false
       },
       {
-        "url": "https://stratechery.com/feed/",
-        "kind": "rss",
-        "filter": false
-      },
-      {
         "url": "https://betakit.com/feed/",
         "kind": "rss",
         "filter": false

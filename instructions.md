@@ -2,6 +2,8 @@
 
 Use the headings below together with the category names in `sources.json`. The model applies the rules for the matching category when deciding whether to include an article.
 
+In general, any aricle that is actually just an intro or abstract of a podcast is not something I am interested in.
+
 ## News
 
 I am interested in **local news for Toronto and Ontario** and **domestic Canadian news** (national politics, economy, society, environment within Canada). I want coverage that helps me understand what is happening in my city, province, and country. I am not interested in news about fires. I am also not interested in stories about murders or acts of violence.
