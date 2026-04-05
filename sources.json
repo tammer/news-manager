@@ -131,6 +131,10 @@
         "kind": "rss"
       },
       {
+        "url": "https://www.cbc.ca/webfeed/rss/rss-canada-toronto",
+        "kind": "rss"
+      },
+      {
         "url": "https://www.blogto.com/",
         "kind": "html"
       }
