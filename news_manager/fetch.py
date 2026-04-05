@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import logging
 import re
+import time
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Literal
 from urllib.parse import urljoin, urlparse, urlunparse
 
@@ -19,6 +22,51 @@ logger = logging.getLogger(__name__)
 
 # Many CDNs treat non-browser UAs harshly; curl’s default identity is widely accepted.
 USER_AGENT = "curl/8.7.1"
+
+# 429 Too Many Requests: retry with Retry-After when present (RFC 9110).
+_HTTP_429_MAX_ATTEMPTS = 4
+_HTTP_429_RETRY_AFTER_CAP_SEC = 120.0
+_HTTP_429_FALLBACK_BASE_SEC = 20.0
+
+
+def _retry_delay_after_429(response: httpx.Response, attempt_index: int) -> float:
+    """Seconds to sleep before the next attempt (capped)."""
+    cap = _HTTP_429_RETRY_AFTER_CAP_SEC
+    raw = response.headers.get("Retry-After")
+    if raw:
+        s = raw.strip()
+        try:
+            sec = int(s)
+            return min(max(0.0, float(sec)), cap)
+        except ValueError:
+            pass
+        try:
+            when = parsedate_to_datetime(s)
+            if when is not None:
+                now = datetime.now(when.tzinfo or timezone.utc)
+                return min(max(0.0, (when - now).total_seconds()), cap)
+        except (TypeError, ValueError, OSError):
+            pass
+    return min(_HTTP_429_FALLBACK_BASE_SEC * (2**attempt_index), cap)
+
+
+def _get_with_429_retry(client: httpx.Client, url: str) -> httpx.Response:
+    """GET with retries on 429 only; other status codes returned as-is."""
+    for attempt in range(_HTTP_429_MAX_ATTEMPTS):
+        r = client.get(url, follow_redirects=True)
+        if r.status_code != 429:
+            return r
+        if attempt >= _HTTP_429_MAX_ATTEMPTS - 1:
+            return r
+        delay = _retry_delay_after_429(r, attempt)
+        logger.warning(
+            "HTTP 429 for %s, sleeping %.1fs then retry (%s/%s)",
+            url,
+            delay,
+            attempt + 1,
+            _HTTP_429_MAX_ATTEMPTS,
+        )
+        time.sleep(delay)
 
 # Paths that are unlikely to be article pages (heuristic; document in code).
 PATH_DENY_SUBSTRINGS = (
@@ -181,7 +229,7 @@ def _response_ok_for_article_html(ctype: str, body_prefix: str) -> bool:
 
 def fetch_html(client: httpx.Client, url: str) -> str | None:
     try:
-        r = client.get(url, follow_redirects=True)
+        r = _get_with_429_retry(client, url)
         r.raise_for_status()
         ctype = r.headers.get("content-type", "")
         prefix = r.text[:2000] if r.text else ""
@@ -202,7 +250,7 @@ def _looks_like_feed_xml(text: str) -> bool:
 def fetch_feed_xml(client: httpx.Client, url: str) -> str | None:
     """GET feed URL; accept RSS/Atom XML (Substack, blogs, etc.)."""
     try:
-        r = client.get(url, follow_redirects=True)
+        r = _get_with_429_retry(client, url)
         r.raise_for_status()
         text = r.text
         if not text or not text.strip():

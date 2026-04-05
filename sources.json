@@ -32,10 +32,6 @@
       {
         "url": "https://www.thestar.com/search/?f=rss&t=article&c=opinion/editorials&l=20&s=start_time&sd=desc",
         "kind": "rss"
-      },
-      {
-        "url": "https://www.thestar.com/search/?f=rss&t=article&c=opinion/letters-to-the-editor&l=30&s=start_time&sd=desc",
-        "kind": "rss"
       }
     ]
   },
