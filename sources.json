@@ -7,15 +7,6 @@
         "kind": "rss"
       },
       {
-        "url": "https://www.cbc.ca/webfeed/rss/rss-canada-toronto",
-        "kind": "rss"
-      },
-      {
-        "url": "https://www.thestar.com/search/?f=rss&t=article&bl=2827101&l=20",
-        "kind": "rss",
-        "filter": true
-      },
-      {
         "url": "https://www.blogto.com/",
         "kind": "html"
       }
@@ -27,10 +18,6 @@
     "sources": [
       {
         "url": "https://www.thestar.com/search/?f=rss&t=article&c=opinion*&l=50&s=start_time&sd=desc",
-        "kind": "rss"
-      },
-      {
-        "url": "https://www.thestar.com/search/?f=rss&t=article&c=opinion/editorials&l=20&s=start_time&sd=desc",
         "kind": "rss"
       }
     ]
