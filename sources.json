@@ -33,6 +33,17 @@
   },
 
   {
+    "category": "Wikipedia",
+    "sources": [
+      {
+        "url": "https://en.wikipedia.org/w/api.php?action=featuredfeed&feed=featured&feedformat=atom",
+        "kind": "rss",
+        "filter": false
+      }
+    ]
+  },
+
+  {
     "category": "Technology",
     "sources": [
       {
