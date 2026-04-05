@@ -66,6 +66,11 @@
         "filter": false
       },
       {
+        "url": "https://www.the-ai-corner.com/feed",
+        "kind": "rss",
+        "filter": false
+      },
+      {
         "url": "https://www.understandingai.org/feed",
         "kind": "rss",
         "filter": false
@@ -102,6 +107,11 @@
       },
       {
         "url": "https://review.firstround.com/",
+        "kind": "html",
+        "filter": false
+      },
+      {
+        "url": "https://aiweekly.co/issues",
         "kind": "html",
         "filter": false
       },
