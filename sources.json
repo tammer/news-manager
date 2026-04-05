@@ -51,6 +51,22 @@
   },
 
   {
+    "category": "books",
+    "sources": [
+      {
+        "url": "https://apnews.com/hub/book-reviews",
+        "kind": "html",
+        "filter": false
+      },
+      {
+        "url": "https://www.theguardian.com/books/books+tone/reviews",
+        "kind": "html",
+        "filter": false
+      }
+    ]
+  },
+
+  {
     "category": "Technology",
     "sources": [
       {

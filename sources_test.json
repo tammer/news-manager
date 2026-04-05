@@ -1,10 +1,10 @@
 [
   {
-    "category": "Technology",
+    "category": "books",
     "sources": [
       {
-        "url": "https://nextbigteng.substack.com/feed",
-        "kind": "rss",
+        "url": "https://apnews.com/hub/book-reviews",
+        "kind": "html",
         "filter": false
       }
     ]
