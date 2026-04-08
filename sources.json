@@ -140,6 +140,16 @@
   },
 
   {
+    "category": "Hacker News",
+    "sources": [
+      {
+        "url": "https://news.ycombinator.com/rss",
+        "kind": "rss"
+      }
+    ]
+  },
+
+  {
     "category": "News",
     "sources": [
       {
