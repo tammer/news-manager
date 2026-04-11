@@ -17,7 +17,7 @@ from news_manager.config import (
     read_sources_json,
     supabase_settings,
 )
-from news_manager.pipeline import run_pipeline
+from news_manager.pipeline import run_pipeline, run_pipeline_from_db
 from news_manager.supabase_sync import create_supabase_client
 
 
@@ -29,16 +29,21 @@ def main(argv: list[str] | None = None) -> int:
         description="Fetch sources, filter and summarize articles using Groq; sync to Supabase.",
     )
     parser.add_argument(
+        "--from-db",
+        action="store_true",
+        help="Load sources and instructions from Supabase (Gistprism v2); do not pass --sources/--instructions.",
+    )
+    parser.add_argument(
         "--sources",
         type=Path,
-        required=True,
-        help="Path to sources.json",
+        default=None,
+        help="Path to sources.json (required unless --from-db)",
     )
     parser.add_argument(
         "--instructions",
         type=Path,
-        required=True,
-        help="Path to instructions.md",
+        default=None,
+        help="Path to instructions.md (required unless --from-db)",
     )
     parser.add_argument(
         "--max-articles",
@@ -74,17 +79,19 @@ def main(argv: list[str] | None = None) -> int:
         format="%(levelname)s: %(message)s",
     )
 
-    try:
-        categories = read_sources_json(args.sources)
-    except (OSError, ValueError) as e:
-        print(str(e), file=sys.stderr)
-        return 1
-
-    try:
-        instructions = read_instructions(args.instructions)
-    except OSError as e:
-        print(str(e), file=sys.stderr)
-        return 1
+    if args.from_db:
+        if args.sources is not None or args.instructions is not None:
+            print(
+                "Do not pass --sources or --instructions with --from-db.",
+                file=sys.stderr,
+            )
+            return 2
+    elif args.sources is None or args.instructions is None:
+        print(
+            "--sources and --instructions are required unless you pass --from-db.",
+            file=sys.stderr,
+        )
+        return 2
 
     try:
         supabase_settings()
@@ -98,16 +105,38 @@ def main(argv: list[str] | None = None) -> int:
         print(str(e), file=sys.stderr)
         return 1
 
+    if not args.from_db:
+        assert args.sources is not None and args.instructions is not None
+        try:
+            categories = read_sources_json(args.sources)
+        except (OSError, ValueError) as e:
+            print(str(e), file=sys.stderr)
+            return 1
+
+        try:
+            instructions = read_instructions(args.instructions)
+        except OSError as e:
+            print(str(e), file=sys.stderr)
+            return 1
+
     try:
         sb = create_supabase_client()
-        run_pipeline(
-            categories,
-            instructions,
-            supabase_client=sb,
-            max_articles=args.max_articles,
-            http_timeout=args.timeout,
-            content_max_chars=args.content_max_chars,
-        )
+        if args.from_db:
+            run_pipeline_from_db(
+                supabase_client=sb,
+                max_articles=args.max_articles,
+                http_timeout=args.timeout,
+                content_max_chars=args.content_max_chars,
+            )
+        else:
+            run_pipeline(
+                categories,
+                instructions,
+                supabase_client=sb,
+                max_articles=args.max_articles,
+                http_timeout=args.timeout,
+                content_max_chars=args.content_max_chars,
+            )
     except RuntimeError as e:
         print(str(e), file=sys.stderr)
         return 1

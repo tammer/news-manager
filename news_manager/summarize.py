@@ -16,6 +16,23 @@ from news_manager.models import OutputArticle, RawArticle
 logger = logging.getLogger(__name__)
 
 
+def format_ingest_instructions(global_text: str, per_source_text: str) -> str:
+    """
+    Combine global (user-level) and per-source instructions for the LLM.
+    When both are non-empty, per-source takes precedence on conflict; both are shown.
+    """
+    g = (global_text or "").strip()
+    p = (per_source_text or "").strip()
+    if g and p:
+        return (
+            "GLOBAL_INSTRUCTIONS apply together with PER_SOURCE_INSTRUCTIONS below. "
+            "Where they conflict, follow PER_SOURCE_INSTRUCTIONS.\n\n"
+            f"GLOBAL_INSTRUCTIONS:\n{g}\n\n"
+            f"---\n\nPER_SOURCE_INSTRUCTIONS:\n{p}"
+        )
+    return p or g
+
+
 @dataclass
 class SummarizeOutcome:
     """Result of processing one article (for caching and progress)."""

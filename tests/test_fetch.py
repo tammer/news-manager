@@ -78,8 +78,8 @@ def test_fetch_html_429_fallback_backoff(mock_sleep: MagicMock) -> None:
     out = fetch_html(client, "https://example.com/b")
     assert out == ok_html
     assert client.get.call_count == 3
-    assert mock_sleep.call_args_list[0][0][0] == 3.0
-    assert mock_sleep.call_args_list[1][0][0] == 6.0
+    assert mock_sleep.call_args_list[0][0][0] == 20.0
+    assert mock_sleep.call_args_list[1][0][0] == 40.0
 
 
 @patch("news_manager.fetch.time.sleep")

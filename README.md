@@ -44,6 +44,8 @@ SUPABASE_SERVICE_ROLE_KEY=...
 
 ## Usage
 
+### File-based (v1 schema)
+
 Create `sources.json` and `instructions.md` (see [plan.md](plan.md)), then:
 
 ```bash
@@ -56,12 +58,28 @@ Or:
 python -m news_manager --sources sources.json --instructions instructions.md
 ```
 
+1. In the Supabase SQL editor, run [`sql/news_articles.sql`](sql/news_articles.sql) and [`sql/news_article_exclusions.sql`](sql/news_article_exclusions.sql).
+2. Set **`SUPABASE_URL`** and **`SUPABASE_SERVICE_ROLE_KEY`** in `.env` (see [`.env.example`](.env.example)).
+
 Every run **requires** Supabase: URLs already present in **`news_articles`** or **`news_article_exclusions`** for that category are skipped (no fetch, no LLM). New work is written **incrementally** (one upsert per included article or excluded URL). Failed upserts are reported on stdout and are **not** retried.
 
-1. In the Supabase SQL editor, run [`sql/news_articles.sql`](sql/news_articles.sql) and [`sql/news_article_exclusions.sql`](sql/news_article_exclusions.sql).
-2. Set **`SUPABASE_URL`** and **`SUPABASE_SERVICE_ROLE_KEY`** in `.env` (see [`.env.example`](.env.example)). Treat the service role key like a password — it bypasses Row Level Security.
+Included rows use natural key **`(url, category)`**; summary fields are refreshed on conflict. **`read`** is not sent so existing values stay intact. Excluded URLs are stored in **`news_article_exclusions`** so repeat runs skip them without calling the LLM.
 
-Included rows use natural key **`(url, category)`**; summary fields are refreshed on conflict. **`read`** and **`liked`** are not sent so existing values stay intact. Excluded URLs are stored in **`news_article_exclusions`** so repeat runs skip them without calling the LLM.
+### Supabase-backed sources (Gistprism v2)
+
+When **`public.sources`** and **`public.user_instructions`** are populated (and each source’s **`category_id`** points at an existing **`categories`** row for that user), run ingest without local JSON/Markdown:
+
+```bash
+news-manager --from-db
+```
+
+Do **not** pass **`--sources`** or **`--instructions`** with **`--from-db`**.
+
+Apply SQL in order: schema in [`20260411.md`](20260411.md), then [`sql/news_articles_v2_unique_user_category_url.sql`](sql/news_articles_v2_unique_user_category_url.sql), then [`sql/news_article_exclusions_v2.sql`](sql/news_article_exclusions_v2.sql). Ingest uses **`user_id`**, **`category_id`**, and upsert key **`(user_id, category_id, url)`** on **`news_articles`**, and **`(category_id, url)`** on exclusions.
+
+Global instructions come from **`user_instructions`**; each source may add **`sources.instruction`**. Both are sent to the model, with **per-source precedence** on conflict (see [`news_manager/summarize.py`](news_manager/summarize.py) **`format_ingest_instructions`**).
+
+Only users with at least one **`sources`** row are processed. Set **`SUPABASE_URL`** and **`SUPABASE_SERVICE_ROLE_KEY`** as above.
 
 ### Stdout progress lines
 
@@ -104,8 +122,9 @@ Example:
 
 | Flag | Description |
 |------|-------------|
-| `--sources` | Path to `sources.json` (required) |
-| `--instructions` | Path to `instructions.md` (required) |
+| `--from-db` | Load sources and instructions from Supabase (v2); omit `--sources` / `--instructions` |
+| `--sources` | Path to `sources.json` (required unless `--from-db`) |
+| `--instructions` | Path to `instructions.md` (required unless `--from-db`) |
 | `--max-articles` | Max articles to fetch per source (default: 15) |
 | `--timeout` | HTTP timeout in seconds (default: 30) |
 | `--content-max-chars` | Max characters of article body sent to the LLM (default: 12000) |

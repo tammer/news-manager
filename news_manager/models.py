@@ -20,6 +20,27 @@ class Source:
     cookies: str | None = None
 
 
+@dataclass(frozen=True)
+class IngestSource:
+    """One row from Supabase ``sources`` (v2 ingest)."""
+
+    url: str
+    category_id: str
+    category_name: str
+    use_rss: bool
+    instruction: str
+    filter: bool = True
+    cookies: str | None = None
+
+    def to_fetch_source(self) -> Source:
+        return Source(
+            url=self.url,
+            kind="rss" if self.use_rss else "html",
+            filter=self.filter,
+            cookies=self.cookies,
+        )
+
+
 @dataclass
 class SourceCategory:
     """One row from sources.json."""
@@ -74,4 +95,18 @@ class CategoryResult:
         return {
             "category": self.category,
             "articles": [a.to_json_dict() for a in self.articles],
+        }
+
+
+@dataclass
+class UserPipelineResult:
+    """Results for one user after a v2 DB-backed pipeline run."""
+
+    user_id: str
+    categories: list[CategoryResult] = field(default_factory=list)
+
+    def to_json_dict(self) -> dict[str, Any]:
+        return {
+            "user_id": self.user_id,
+            "categories": [c.to_json_dict() for c in self.categories],
         }
