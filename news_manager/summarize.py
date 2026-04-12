@@ -222,6 +222,7 @@ Respond with JSON only, using this exact shape:
 }}
 
 If the article does not match what the user wants for this category, set include to false and fill "why" with one clear sentence tied to the instructions and article content.
+The "full_summary" should summarize the article and make no reference to the user's instructions.
 """
 
     title = article.title
