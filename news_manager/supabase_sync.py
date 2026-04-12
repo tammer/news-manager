@@ -184,7 +184,8 @@ def fetch_user_instructions(client: Any, user_id: str) -> str:
 def fetch_sources_with_categories(client: Any, user_id: str) -> list[dict[str, Any]]:
     """
     Sources for user with category display name resolved from public.categories.
-    Each dict: url, use_rss, category_id, category_name, instruction.
+    Each dict: url, use_rss, category_id, category_name, instruction
+    (``str`` when set, ``None`` when SQL null / empty / whitespace-only).
     """
     try:
         sr = (
@@ -236,13 +237,20 @@ def fetch_sources_with_categories(client: Any, user_id: str) -> list[dict[str, A
         if not isinstance(url, str) or not url.strip():
             continue
         inst = row.get("instruction")
+        if inst is None:
+            instruction_out: str | None = None
+        elif isinstance(inst, str):
+            s = inst.strip()
+            instruction_out = s if s else None
+        else:
+            instruction_out = None
         out.append(
             {
                 "url": url.strip(),
                 "use_rss": bool(row.get("use_rss", False)),
                 "category_id": cid_s,
                 "category_name": names.get(cid_s, ""),
-                "instruction": inst.strip() if isinstance(inst, str) else "",
+                "instruction": instruction_out,
             }
         )
     return out

@@ -40,9 +40,24 @@ from news_manager.supabase_sync import (
     upsert_included_article,
     upsert_included_article_v2,
 )
-from news_manager.summarize import filter_and_summarize_outcome, format_ingest_instructions
+from news_manager.summarize import filter_and_summarize_outcome
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_llm_ingest_instructions(
+    global_instruction: str | None,
+    per_source_instruction: str | None,
+) -> str:
+    """
+    Application code picks exactly one instruction string for the LLM (never both).
+    If per-source is non-null and non-empty after strip, use it; otherwise use global (stripped).
+    """
+    if per_source_instruction is not None:
+        per = str(per_source_instruction).strip()
+        if per != "":
+            return per
+    return (global_instruction or "").strip()
 
 
 def run_pipeline(
@@ -64,7 +79,7 @@ def run_pipeline(
     cm = content_max_chars if content_max_chars is not None else DEFAULT_CONTENT_MAX_CHARS
     out: list[CategoryResult] = []
     limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
-    combined_instructions = format_ingest_instructions(instructions, "")
+    llm_instructions = resolve_llm_ingest_instructions(instructions, None)
 
     for sc in categories:
         bucket: list[OutputArticle] = []
@@ -116,7 +131,7 @@ def run_pipeline(
                     outcome = filter_and_summarize_outcome(
                         raw,
                         category=sc.category,
-                        instructions=combined_instructions,
+                        instructions=llm_instructions,
                         content_max_chars=cm,
                         apply_filter=src.filter,
                         source=source_label,
@@ -168,8 +183,10 @@ def run_pipeline_from_db(
     content_max_chars: int | None = None,
 ) -> list[UserPipelineResult]:
     """
-    For each user that has sources, load global + per-source instructions from Supabase,
-    prefetch v2 ``news_articles`` / ``news_article_exclusions`` by ``category_id``,
+    For each user that has sources, load global and per-source instructions from Supabase.
+    For each source, ``resolve_llm_ingest_instructions`` sends either per-source text
+    (when set and non-empty) or global text to the model — never both.
+    Prefetch v2 ``news_articles`` / ``news_article_exclusions`` by ``category_id``,
     then fetch → filter/summarize → upsert (v2). Same normalized URL once per category.
     """
     from news_manager.config import DEFAULT_CONTENT_MAX_CHARS
@@ -205,15 +222,18 @@ def run_pipeline_from_db(
             )
 
             for row in src_rows:
+                per_inst = row.get("instruction")
+                if per_inst is not None and not isinstance(per_inst, str):
+                    per_inst = None
                 ing = IngestSource(
                     url=str(row["url"]),
                     category_id=category_id,
                     category_name=category_name,
                     use_rss=bool(row.get("use_rss", False)),
-                    instruction=str(row.get("instruction") or ""),
+                    instruction=per_inst,
                 )
                 src = ing.to_fetch_source()
-                combined = format_ingest_instructions(global_i, ing.instruction)
+                llm_instructions = resolve_llm_ingest_instructions(global_i, per_inst)
                 source_label = source_base_label(ing.url)
                 try:
                     jar = cookie_jar_for_source(src)
@@ -256,7 +276,7 @@ def run_pipeline_from_db(
                         outcome = filter_and_summarize_outcome(
                             raw,
                             category=category_name,
-                            instructions=combined,
+                            instructions=llm_instructions,
                             content_max_chars=cm,
                             apply_filter=src.filter,
                             source=source_label,

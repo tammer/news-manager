@@ -287,7 +287,7 @@ def test_run_pipeline_skips_url_already_in_news_articles(
 @patch("news_manager.pipeline.fetch_sources_with_categories")
 @patch("news_manager.pipeline.fetch_user_instructions")
 @patch("news_manager.pipeline.list_user_ids_with_sources")
-def test_run_pipeline_from_db_combines_instructions_and_upserts_v2(
+def test_run_pipeline_from_db_resolves_instructions_and_upserts_v2(
     mock_list_users: MagicMock,
     mock_global: MagicMock,
     mock_sources: MagicMock,
@@ -338,8 +338,8 @@ def test_run_pipeline_from_db_combines_instructions_and_upserts_v2(
     assert mock_upsert_v2.call_args[0][1] == "user-1"
     assert mock_upsert_v2.call_args[0][2] == "cid-1"
     inst = mock_outcome.call_args.kwargs["instructions"]
-    assert "global body" in inst
-    assert "per source" in inst
+    assert inst == "per source"
+    assert "global body" not in inst
 
 
 @patch("news_manager.pipeline.upsert_excluded_url_v2")
@@ -368,7 +368,7 @@ def test_run_pipeline_from_db_excluded_passes_exclude_why(
             "use_rss": False,
             "category_id": "cid-1",
             "category_name": "News",
-            "instruction": "",
+            "instruction": None,
         }
     ]
     mock_prefetch.return_value = (set(), set())

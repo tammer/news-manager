@@ -341,6 +341,44 @@ def test_fetch_sources_with_categories() -> None:
     assert rows[0]["instruction"] == "per"
 
 
+def test_fetch_sources_with_categories_null_or_blank_instruction() -> None:
+    client = MagicMock()
+    sources_t = MagicMock()
+    sources_t.select.return_value.eq.return_value.execute.return_value = MagicMock(
+        data=[
+            {
+                "url": "https://a.com",
+                "use_rss": True,
+                "category_id": "cid1",
+                "instruction": None,
+            },
+            {
+                "url": "https://b.com",
+                "use_rss": False,
+                "category_id": "cid1",
+                "instruction": "   ",
+            },
+        ]
+    )
+    cat_t = MagicMock()
+    cat_t.select.return_value.in_.return_value.execute.return_value = MagicMock(
+        data=[{"id": "cid1", "name": "News"}]
+    )
+
+    def table(name: str) -> MagicMock:
+        if name == "sources":
+            return sources_t
+        if name == "categories":
+            return cat_t
+        raise AssertionError(name)
+
+    client.table.side_effect = table
+    rows = fetch_sources_with_categories(client, "u1")
+    assert len(rows) == 2
+    assert rows[0]["instruction"] is None
+    assert rows[1]["instruction"] is None
+
+
 def test_upsert_included_article_v2_on_conflict() -> None:
     news_table = MagicMock()
     up = MagicMock()
