@@ -1,4 +1,6 @@
-# Scheduled fetch + summarize + Supabase upsert.
+# Scheduled fetch + summarize + Supabase upsert (Gistprism v2).
+# Loads sources and instructions from Supabase via --from-db (not sources.json / instructions.md).
+#
 # Repository secrets (Settings → Secrets and variables → Actions):
 #   GROQ_API_KEY
 #   SUPABASE_URL
@@ -48,4 +50,4 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           # Optional: set repository variable GROQ_MODEL (Settings → Variables) to override model
           GROQ_MODEL: ${{ vars.GROQ_MODEL }}
-        run: python -m news_manager --sources sources.json --instructions instructions.md -v
+        run: news-manager --from-db -v
