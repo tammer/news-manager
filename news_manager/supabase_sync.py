@@ -121,15 +121,19 @@ def upsert_included_article(
     return None
 
 
-def upsert_excluded_url(client: Any, url: str, category: str) -> str | None:
+def upsert_excluded_url(
+    client: Any, url: str, category: str, why: str | None = None
+) -> str | None:
     """
     Record an excluded URL. Returns None on success, or an error message string.
+    ``why`` is an optional one-sentence LLM explanation (column ``why``).
     """
+    row: dict[str, Any] = {"url": url, "category": category, "why": why}
     try:
         (
             client.table("news_article_exclusions")
             .upsert(
-                [{"url": url, "category": category}],
+                [row],
                 on_conflict="url,category",
             )
             .execute()
@@ -327,14 +331,15 @@ def upsert_included_article_v2(
 
 
 def upsert_excluded_url_v2(
-    client: Any, url: str, category_id: str
+    client: Any, url: str, category_id: str, why: str | None = None
 ) -> str | None:
-    """Record an excluded URL (v2 PK: category_id, url)."""
+    """Record an excluded URL (v2 PK: category_id, url). Optional ``why`` explains the filter decision."""
+    row: dict[str, Any] = {"category_id": category_id, "url": url, "why": why}
     try:
         (
             client.table("news_article_exclusions")
             .upsert(
-                [{"category_id": category_id, "url": url}],
+                [row],
                 on_conflict="category_id,url",
             )
             .execute()

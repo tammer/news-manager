@@ -6,6 +6,7 @@ create table if not exists public.news_article_exclusions (
   category_id uuid not null references public.categories (id) on delete cascade,
   url text not null,
   excluded_at timestamptz not null default now(),
+  why text,
   constraint news_article_exclusions_pkey primary key (category_id, url)
 );
 

@@ -64,6 +64,44 @@ def test_run_pipeline_keeps_empty_category(
     assert out[1].articles == []
 
 
+@patch("news_manager.pipeline.upsert_excluded_url")
+@patch("news_manager.pipeline.filter_and_summarize_outcome")
+@patch("news_manager.pipeline.fetch_single_raw_article")
+@patch("news_manager.pipeline.discover_article_targets")
+def test_run_pipeline_excluded_passes_exclude_why_to_supabase(
+    mock_discover: MagicMock,
+    mock_fetch_one: MagicMock,
+    mock_outcome: MagicMock,
+    mock_upsert_excl: MagicMock,
+) -> None:
+    mock_discover.return_value = [("https://u", None, None)]
+    mock_fetch_one.return_value = RawArticle(
+        title="T", date=None, content="c", url="https://u"
+    )
+    mock_outcome.return_value = SummarizeOutcome(
+        output=None,
+        outcome="excluded",
+        exclude_why="Does not match the requested beat.",
+    )
+    mock_upsert_excl.return_value = None
+
+    cats = [
+        SourceCategory(category="News", sources=[Source(url="a.com", filter=True)]),
+    ]
+    sb = _mock_supabase_client()
+    run_pipeline(
+        cats,
+        instructions="x",
+        supabase_client=sb,
+        max_articles=5,
+        http_timeout=1.0,
+    )
+    mock_upsert_excl.assert_called_once()
+    assert mock_upsert_excl.call_args[0][1] == "https://u"
+    assert mock_upsert_excl.call_args[0][2] == "News"
+    assert mock_upsert_excl.call_args[0][3] == "Does not match the requested beat."
+
+
 @patch("news_manager.pipeline.filter_and_summarize_outcome")
 @patch("news_manager.pipeline.fetch_single_raw_article")
 @patch("news_manager.pipeline.discover_article_targets")
@@ -302,3 +340,47 @@ def test_run_pipeline_from_db_combines_instructions_and_upserts_v2(
     inst = mock_outcome.call_args.kwargs["instructions"]
     assert "global body" in inst
     assert "per source" in inst
+
+
+@patch("news_manager.pipeline.upsert_excluded_url_v2")
+@patch("news_manager.pipeline.filter_and_summarize_outcome")
+@patch("news_manager.pipeline.fetch_single_raw_article")
+@patch("news_manager.pipeline.discover_article_targets")
+@patch("news_manager.pipeline.prefetch_processed_urls_v2")
+@patch("news_manager.pipeline.fetch_sources_with_categories")
+@patch("news_manager.pipeline.fetch_user_instructions")
+@patch("news_manager.pipeline.list_user_ids_with_sources")
+def test_run_pipeline_from_db_excluded_passes_exclude_why(
+    mock_list_users: MagicMock,
+    mock_global: MagicMock,
+    mock_sources: MagicMock,
+    mock_prefetch: MagicMock,
+    mock_discover: MagicMock,
+    mock_fetch_one: MagicMock,
+    mock_outcome: MagicMock,
+    mock_upsert_excl: MagicMock,
+) -> None:
+    mock_list_users.return_value = ["user-1"]
+    mock_global.return_value = ""
+    mock_sources.return_value = [
+        {
+            "url": "https://a.com",
+            "use_rss": False,
+            "category_id": "cid-1",
+            "category_name": "News",
+            "instruction": "",
+        }
+    ]
+    mock_prefetch.return_value = (set(), set())
+    mock_discover.return_value = [("https://u", None, None)]
+    mock_fetch_one.return_value = RawArticle(
+        title="T", date=None, content="c", url="https://u"
+    )
+    mock_outcome.return_value = SummarizeOutcome(
+        output=None, outcome="excluded", exclude_why="Wrong topic for this category."
+    )
+    mock_upsert_excl.return_value = None
+
+    sb = MagicMock()
+    run_pipeline_from_db(supabase_client=sb, max_articles=5, http_timeout=1.0)
+    mock_upsert_excl.assert_called_once_with(sb, "https://u", "cid-1", "Wrong topic for this category.")

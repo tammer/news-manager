@@ -39,6 +39,7 @@ class SummarizeOutcome:
 
     output: OutputArticle | None
     outcome: Literal["included", "excluded", "error"]
+    exclude_why: str | None = None
 
 _JSON_FENCE = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
 
@@ -233,10 +234,11 @@ Respond with JSON only, using this exact shape:
 {{
   "include": <true or false>,
   "short_summary": "<about 25 words if include is true, else empty string>",
-  "full_summary": "<about 200 words if include is true, else empty string>"
+  "full_summary": "<about 200 words if include is true, else empty string>",
+  "why": "<if include is false: very concise reason why this article was filtered out; if include is true: empty string>"
 }}
 
-If the article does not match what the user wants for this category, set include to false.
+If the article does not match what the user wants for this category, set include to false and fill "why" with one clear sentence tied to the instructions and article content.
 """
 
     title = article.title
@@ -269,8 +271,12 @@ If the article does not match what the user wants for this category, set include
 
     include = data.get("include")
     if include is not True:
+        why_raw = data.get("why", "")
+        if not isinstance(why_raw, str):
+            why_raw = str(why_raw) if why_raw is not None else ""
+        why_one = " ".join(why_raw.split()).strip() or None
         _maybe_emit_stderr(emit_stderr, title, "excluded")
-        return SummarizeOutcome(output=None, outcome="excluded")
+        return SummarizeOutcome(output=None, outcome="excluded", exclude_why=why_one)
 
     short_s = data.get("short_summary", "")
     full_s = data.get("full_summary", "")

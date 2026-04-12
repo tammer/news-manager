@@ -136,7 +136,9 @@ def run_pipeline(
                             )
                         urls_done_this_category.add(nu)
                     elif outcome.outcome == "excluded":
-                        err = upsert_excluded_url(supabase_client, nu, sc.category)
+                        err = upsert_excluded_url(
+                            supabase_client, nu, sc.category, outcome.exclude_why
+                        )
                         if err:
                             report_processed(nu, sc.category, False, err)
                         else:
@@ -277,7 +279,9 @@ def run_pipeline_from_db(
                                 )
                             urls_done_this_category.add(nu)
                         elif outcome.outcome == "excluded":
-                            err = upsert_excluded_url_v2(supabase_client, nu, category_id)
+                            err = upsert_excluded_url_v2(
+                                supabase_client, nu, category_id, outcome.exclude_why
+                            )
                             if err:
                                 report_processed(nu, category_name, False, err)
                             else:

@@ -5,6 +5,7 @@ create table if not exists public.news_article_exclusions (
   url text not null,
   category text not null,
   excluded_at timestamptz not null default now(),
+  why text,
   constraint news_article_exclusions_url_category_pk primary key (url, category)
 );
 

@@ -201,6 +201,17 @@ def test_upsert_excluded_url_calls_exclusions_table() -> None:
     row = excl_table.upsert.call_args[0][0][0]
     assert row["url"] == "https://x.com/a"
     assert row["category"] == "News"
+    assert row["why"] is None
+
+
+def test_upsert_excluded_url_passes_why() -> None:
+    excl_table = MagicMock()
+    excl_table.upsert.return_value.execute.return_value = MagicMock()
+    client = MagicMock()
+    client.table.return_value = excl_table
+    assert upsert_excluded_url(client, "https://x.com/b", "News", why="Off-topic.") is None
+    row = excl_table.upsert.call_args[0][0][0]
+    assert row["why"] == "Off-topic."
 
 
 def _client_v2_prefetch(news_urls: list[str], excl_urls: list[str]) -> MagicMock:
@@ -360,4 +371,16 @@ def test_upsert_excluded_url_v2() -> None:
     row = excl_table.upsert.call_args[0][0][0]
     assert row["url"] == "https://x.com/a"
     assert row["category_id"] == "c1"
+    assert row["why"] is None
     assert excl_table.upsert.call_args[1]["on_conflict"] == "category_id,url"
+
+
+def test_upsert_excluded_url_v2_passes_why() -> None:
+    excl_table = MagicMock()
+    excl_table.upsert.return_value.execute.return_value = MagicMock()
+    client = MagicMock()
+    client.table.return_value = excl_table
+    assert (
+        upsert_excluded_url_v2(client, "https://x.com/b", "c1", why="Not a match.") is None
+    )
+    assert excl_table.upsert.call_args[0][0][0]["why"] == "Not a match."
