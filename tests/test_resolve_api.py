@@ -54,6 +54,7 @@ def test_resolve_source_json_body_validation() -> None:
     assert "query" in bad2["message"].lower()
 
 
+@patch("news_manager.source_resolve._probe_feed_paths")
 @patch("news_manager.source_resolve._chat_json")
 @patch("news_manager.source_resolve.fetch_html_limited")
 @patch("news_manager.source_resolve._collect_candidates_from_query")
@@ -61,6 +62,7 @@ def test_resolve_source_success_rss_from_link(
     mock_collect: MagicMock,
     mock_fetch: MagicMock,
     mock_chat: MagicMock,
+    mock_probe: MagicMock,
 ) -> None:
     mock_collect.return_value = [
         {
@@ -76,7 +78,6 @@ def test_resolve_source_success_rss_from_link(
             "confidence": "high",
             "notes": "",
         },
-        {"is_article_listing": True, "reason": "index"},
     ]
     mock_fetch.return_value = (
         '<html><head><title>Example News</title>'
@@ -84,6 +85,7 @@ def test_resolve_source_success_rss_from_link(
         "</head><body></body></html>",
         "https://example.com/",
     )
+    mock_probe.return_value = []
 
     out = resolve_source("example news", max_results=5)
     assert out["ok"] is True
@@ -93,6 +95,7 @@ def test_resolve_source_success_rss_from_link(
     assert out["homepage_url"] == "https://example.com/"
 
 
+@patch("news_manager.source_resolve._probe_feed_paths")
 @patch("news_manager.source_resolve._chat_json")
 @patch("news_manager.source_resolve.fetch_html_limited")
 @patch("news_manager.source_resolve._collect_candidates_from_query")
@@ -100,6 +103,7 @@ def test_resolve_source_not_a_listing(
     mock_collect: MagicMock,
     mock_fetch: MagicMock,
     mock_chat: MagicMock,
+    mock_probe: MagicMock,
 ) -> None:
     mock_collect.return_value = [{"title": "X", "href": "https://example.com/a", "body": ""}]
     mock_chat.side_effect = [
@@ -112,10 +116,47 @@ def test_resolve_source_not_a_listing(
         {"is_article_listing": False, "reason": "single article"},
     ]
     mock_fetch.return_value = ("<html><title>One</title></html>", "https://example.com/a")
+    mock_probe.return_value = []
 
     out = resolve_source("x")
     assert out["ok"] is False
     assert out["error"] == "not_a_listing"
+
+
+@patch("news_manager.source_resolve._probe_feed_paths")
+@patch("news_manager.source_resolve._chat_json")
+@patch("news_manager.source_resolve.fetch_html_limited")
+@patch("news_manager.source_resolve._collect_candidates_from_query")
+def test_resolve_source_feed_probe_skips_subscribe_homepage(
+    mock_collect: MagicMock,
+    mock_fetch: MagicMock,
+    mock_chat: MagicMock,
+    mock_probe: MagicMock,
+) -> None:
+    """Valid /feed succeeds even when HTML looks like subscribe-only (no listing LLM)."""
+    mock_collect.return_value = [
+        {"title": "Sub", "href": "https://letters.example.com/", "body": ""},
+    ]
+    mock_chat.side_effect = [
+        {
+            "homepage_url": "https://letters.example.com/",
+            "website_title": "Letters",
+            "confidence": "high",
+            "notes": "",
+        },
+    ]
+    mock_fetch.return_value = (
+        "<html><title>Subscribe to our newsletter</title><body>No posts here</body></html>",
+        "https://letters.example.com/",
+    )
+    mock_probe.return_value = ["https://letters.example.com/feed"]
+
+    out = resolve_source("letters example")
+    assert out["ok"] is True
+    assert out["use_rss"] is True
+    assert out["rss_found"] is True
+    assert out["resolved_url"] == "https://letters.example.com/feed"
+    assert mock_chat.call_count == 1
 
 
 def test_flask_resolve_401_without_token(jwt_secret: str) -> None:
@@ -140,6 +181,7 @@ def test_flask_resolve_401_bad_token(jwt_secret: str) -> None:
     assert r.status_code == 401
 
 
+@patch("news_manager.source_resolve._probe_feed_paths")
 @patch("news_manager.source_resolve._chat_json")
 @patch("news_manager.source_resolve.fetch_html_limited")
 @patch("news_manager.source_resolve._collect_candidates_from_query")
@@ -147,6 +189,7 @@ def test_flask_resolve_200_mocked(
     mock_collect: MagicMock,
     mock_fetch: MagicMock,
     mock_chat: MagicMock,
+    mock_probe: MagicMock,
     jwt_secret: str,
     authed_headers: dict[str, str],
 ) -> None:
@@ -162,6 +205,7 @@ def test_flask_resolve_200_mocked(
         {"is_article_listing": True, "reason": ""},
     ]
     mock_fetch.return_value = ("<html><title>X</title></html>", "https://example.com/")
+    mock_probe.return_value = []
 
     app = create_app()
     app.testing = True

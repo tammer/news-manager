@@ -369,22 +369,6 @@ def resolve_source(
     if not website_title:
         website_title = _page_title(html) or urlparse(homepage_final).netloc
 
-    excerpt = html[:_MAX_HTML_FOR_LLM]
-    listing = _llm_is_article_listing(homepage_final, excerpt)
-    is_listing = True
-    if isinstance(listing, dict) and "is_article_listing" in listing:
-        is_listing = bool(listing.get("is_article_listing"))
-        reason = str(listing.get("reason") or "").strip()
-        if reason:
-            notes_parts.append(reason)
-
-    if not is_listing:
-        return {
-            "ok": False,
-            "error": "not_a_listing",
-            "message": "Could not find a homepage that looks like a story listing.",
-        }
-
     feed_from_html = _extract_feed_links(html, homepage_final)
     feed_probed = _probe_feed_paths(homepage_final)
     all_feeds: list[str] = []
@@ -402,9 +386,24 @@ def resolve_source(
                     break
         resolved_url = _scrub_url(best_feed)
         use_rss = True
-        if not notes_parts:
-            notes_parts.append("RSS/Atom feed available; using feed URL for ingest.")
+        notes_parts.append("RSS/Atom feed found; using feed URL for ingest (skips subscribe/JS-only homepages).")
     else:
+        excerpt = html[:_MAX_HTML_FOR_LLM]
+        listing = _llm_is_article_listing(homepage_final, excerpt)
+        is_listing = True
+        if isinstance(listing, dict) and "is_article_listing" in listing:
+            is_listing = bool(listing.get("is_article_listing"))
+            reason = str(listing.get("reason") or "").strip()
+            if reason:
+                notes_parts.append(reason)
+
+        if not is_listing:
+            return {
+                "ok": False,
+                "error": "not_a_listing",
+                "message": "Could not find a homepage that looks like a story listing.",
+            }
+
         resolved_url = homepage_final
         use_rss = False
         notes_parts.append("No feed found; use HTML listing URL.")
