@@ -106,6 +106,19 @@ def groq_model() -> str:
     return os.environ.get("GROQ_MODEL", DEFAULT_GROQ_MODEL).strip() or DEFAULT_GROQ_MODEL
 
 
+def supabase_jwt_secret() -> str:
+    """
+    JWT secret from Supabase (Dashboard → Settings → API → JWT Secret).
+    Used by `resolve-api` to verify `Authorization: Bearer` user tokens.
+    """
+    s = os.environ.get("SUPABASE_JWT_SECRET", "").strip()
+    if not s:
+        raise ValueError(
+            "SUPABASE_JWT_SECRET is not set. Add it to your environment or .env file."
+        )
+    return s
+
+
 def supabase_settings() -> tuple[str, str]:
     """
     URL and service role key for Supabase REST (required for every CLI run).

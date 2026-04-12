@@ -18,6 +18,9 @@ dependencies = [
     "python-dotenv>=1.0,<2",
     "feedparser>=6.0,<7",
     "supabase>=2,<3",
+    "flask>=3.0,<4",
+    "PyJWT>=2.8,<3",
+    "duckduckgo-search>=6.0,<8",
 ]
 
 [project.optional-dependencies]
@@ -26,6 +29,7 @@ dev = ["pytest>=8,<9"]
 [project.scripts]
 news-manager = "news_manager.cli:main"
 fetch-test = "news_manager.fetch_test:main"
+resolve-api = "news_manager.resolve_app:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
