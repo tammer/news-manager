@@ -19,7 +19,7 @@ dependencies = [
     "feedparser>=6.0,<7",
     "supabase>=2,<3",
     "flask>=3.0,<4",
-    "PyJWT>=2.8,<3",
+    "PyJWT[crypto]>=2.8,<3",
     "duckduckgo-search>=6.0,<8",
 ]
 

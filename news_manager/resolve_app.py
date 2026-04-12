@@ -9,7 +9,11 @@ import jwt
 from flask import Flask, jsonify, request
 
 from news_manager.auth_supabase import verify_supabase_jwt
-from news_manager.config import groq_api_key, load_dotenv_if_present, supabase_jwt_secret
+from news_manager.config import (
+    assert_resolve_api_supabase_auth_config,
+    groq_api_key,
+    load_dotenv_if_present,
+)
 from news_manager.source_resolve import resolve_source_json_body
 
 logger = logging.getLogger(__name__)
@@ -69,7 +73,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO)
     load_dotenv_if_present()
     groq_api_key()
-    supabase_jwt_secret()
+    assert_resolve_api_supabase_auth_config()
     app = create_app()
     port = int(os.environ.get("RESOLVE_API_PORT", "5000"))
     app.run(host="0.0.0.0", port=port, debug=False)

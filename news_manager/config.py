@@ -106,17 +106,45 @@ def groq_model() -> str:
     return os.environ.get("GROQ_MODEL", DEFAULT_GROQ_MODEL).strip() or DEFAULT_GROQ_MODEL
 
 
-def supabase_jwt_secret() -> str:
+def supabase_url_base() -> str | None:
+    """`SUPABASE_URL` without trailing slash, or None if unset."""
+    u = os.environ.get("SUPABASE_URL", "").strip().rstrip("/")
+    return u or None
+
+
+def supabase_jwt_secret_optional() -> str | None:
     """
-    JWT secret from Supabase (Dashboard → Settings → API → JWT Secret).
-    Used by `resolve-api` to verify `Authorization: Bearer` user tokens.
+    Legacy symmetric JWT secret (HS256), if set.
+    Used with `resolve-api` when access tokens still use HS256.
     """
     s = os.environ.get("SUPABASE_JWT_SECRET", "").strip()
+    return s or None
+
+
+def supabase_jwt_secret() -> str:
+    """
+    JWT secret from Supabase (legacy HS256 path only).
+    Raises if unset — prefer `supabase_jwt_secret_optional()` for optional checks.
+    """
+    s = supabase_jwt_secret_optional()
     if not s:
         raise ValueError(
             "SUPABASE_JWT_SECRET is not set. Add it to your environment or .env file."
         )
     return s
+
+
+def assert_resolve_api_supabase_auth_config() -> None:
+    """
+    `resolve-api` needs at least one of:
+    - `SUPABASE_URL` — JWKS verification for ES256/RS256 (JWT signing keys)
+    - `SUPABASE_JWT_SECRET` — HS256 legacy verification
+    """
+    if not supabase_url_base() and not supabase_jwt_secret_optional():
+        raise ValueError(
+            "Set SUPABASE_URL (for JWT signing keys / JWKS) and/or SUPABASE_JWT_SECRET "
+            "(for legacy HS256). At least one is required for resolve-api."
+        )
 
 
 def supabase_settings() -> tuple[str, str]:
