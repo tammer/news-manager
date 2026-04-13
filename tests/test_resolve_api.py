@@ -99,6 +99,88 @@ def test_resolve_source_success_rss_from_link(
 @patch("news_manager.source_resolve._chat_json")
 @patch("news_manager.source_resolve.fetch_html_limited")
 @patch("news_manager.source_resolve._collect_candidates_from_query")
+def test_resolve_source_section_url_rejects_site_wide_rss(
+    mock_collect: MagicMock,
+    mock_fetch: MagicMock,
+    mock_chat: MagicMock,
+    mock_probe: MagicMock,
+) -> None:
+    """Topic hub must not resolve to root /index.rss linked from page chrome."""
+    mock_collect.return_value = [
+        {"title": "", "href": "https://apnews.com/hub/book-reviews", "body": "direct"},
+    ]
+    mock_chat.side_effect = [{"is_article_listing": True, "reason": ""}]
+    mock_fetch.return_value = (
+        '<html><head><link rel="alternate" type="application/rss+xml" href="/index.rss" />'
+        "</head><body></body></html>",
+        "https://apnews.com/hub/book-reviews",
+    )
+    mock_probe.return_value = []
+
+    out = resolve_source("https://apnews.com/hub/book-reviews", max_results=5)
+    assert out["ok"] is True
+    assert out["use_rss"] is False
+    assert out["rss_found"] is True
+    assert out["resolved_url"] == "https://apnews.com/hub/book-reviews"
+    assert "site-wide" in out["notes"].lower()
+
+
+@patch("news_manager.source_resolve._llm_pick_homepage")
+@patch("news_manager.source_resolve._probe_feed_paths")
+@patch("news_manager.source_resolve._chat_json")
+@patch("news_manager.source_resolve.fetch_html_limited")
+@patch("news_manager.source_resolve._collect_candidates_from_query")
+def test_direct_pasted_url_skips_homepage_llm(
+    mock_collect: MagicMock,
+    mock_fetch: MagicMock,
+    mock_chat: MagicMock,
+    mock_probe: MagicMock,
+    mock_llm_pick: MagicMock,
+) -> None:
+    """Regression: LLM 'canonical homepage' must not rewrite /hub/... to site root."""
+    mock_collect.return_value = [
+        {"title": "", "href": "https://apnews.com/hub/book-reviews", "body": "direct"},
+    ]
+    mock_chat.side_effect = [{"is_article_listing": True, "reason": ""}]
+    mock_fetch.return_value = ("<html><title>H</title></html>", "https://apnews.com/hub/book-reviews")
+    mock_probe.return_value = []
+
+    resolve_source("https://apnews.com/hub/book-reviews", max_results=5)
+
+    mock_llm_pick.assert_not_called()
+
+
+@patch("news_manager.source_resolve._probe_feed_paths")
+@patch("news_manager.source_resolve._chat_json")
+@patch("news_manager.source_resolve.fetch_html_limited")
+@patch("news_manager.source_resolve._collect_candidates_from_query")
+def test_resolve_source_section_scoped_rss_still_preferred(
+    mock_collect: MagicMock,
+    mock_fetch: MagicMock,
+    mock_chat: MagicMock,
+    mock_probe: MagicMock,
+) -> None:
+    mock_collect.return_value = [
+        {"title": "", "href": "https://example.com/hub/books", "body": "direct"},
+    ]
+    mock_chat.side_effect = []
+    mock_fetch.return_value = (
+        '<html><head><link rel="alternate" type="application/rss+xml" href="/hub/books/feed.xml" />'
+        "</head><body></body></html>",
+        "https://example.com/hub/books",
+    )
+    mock_probe.return_value = []
+
+    out = resolve_source("https://example.com/hub/books", max_results=5)
+    assert out["ok"] is True
+    assert out["use_rss"] is True
+    assert out["resolved_url"] == "https://example.com/hub/books/feed.xml"
+
+
+@patch("news_manager.source_resolve._probe_feed_paths")
+@patch("news_manager.source_resolve._chat_json")
+@patch("news_manager.source_resolve.fetch_html_limited")
+@patch("news_manager.source_resolve._collect_candidates_from_query")
 def test_resolve_source_not_a_listing(
     mock_collect: MagicMock,
     mock_fetch: MagicMock,
