@@ -28,8 +28,6 @@ class IngestSource:
     category_id: str
     category_name: str
     use_rss: bool
-    #: Per-source override for the LLM; None or empty means use global instructions in the pipeline.
-    instruction: str | None = None
     filter: bool = True
     cookies: str | None = None
 

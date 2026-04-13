@@ -160,37 +160,16 @@ def list_user_ids_with_sources(client: Any) -> list[str]:
     return sorted(out)
 
 
-def fetch_user_instructions(client: Any, user_id: str) -> str:
-    """Global instruction text for user; empty string if no row."""
-    try:
-        r = (
-            client.table("user_instructions")
-            .select("instruction")
-            .eq("user_id", user_id)
-            .limit(1)
-            .execute()
-        )
-    except Exception as e:
-        raise RuntimeError(f"Supabase fetch_user_instructions failed: {e}") from e
-    rows = r.data or []
-    if not rows:
-        return ""
-    inst = rows[0].get("instruction")
-    if not isinstance(inst, str):
-        return ""
-    return inst.strip()
-
-
 def fetch_sources_with_categories(client: Any, user_id: str) -> list[dict[str, Any]]:
     """
-    Sources for user with category display name resolved from public.categories.
-    Each dict: url, use_rss, category_id, category_name, instruction
-    (``str`` when set, ``None`` when SQL null / empty / whitespace-only).
+    Sources for user with category display name and instruction from public.categories.
+    Each dict: url, use_rss, category_id, category_name, category_instruction
+    (``category_instruction`` is stripped text, or ``""`` when null / blank).
     """
     try:
         sr = (
             client.table("sources")
-            .select("url, use_rss, category_id, instruction")
+            .select("url, use_rss, category_id")
             .eq("user_id", user_id)
             .execute()
         )
@@ -210,11 +189,12 @@ def fetch_sources_with_categories(client: Any, user_id: str) -> list[dict[str, A
             seen.add(s)
             cat_ids.append(s)
     names: dict[str, str] = {}
+    instructions: dict[str, str] = {}
     if cat_ids:
         try:
             cr = (
                 client.table("categories")
-                .select("id, name")
+                .select("id, name, instruction")
                 .in_("id", cat_ids)
                 .execute()
             )
@@ -224,8 +204,14 @@ def fetch_sources_with_categories(client: Any, user_id: str) -> list[dict[str, A
             cid = crow.get("id")
             if cid is None:
                 continue
+            cid_key = str(cid)
             nm = crow.get("name")
-            names[str(cid)] = nm.strip() if isinstance(nm, str) else ""
+            names[cid_key] = nm.strip() if isinstance(nm, str) else ""
+            inst = crow.get("instruction")
+            if isinstance(inst, str):
+                instructions[cid_key] = inst.strip()
+            else:
+                instructions[cid_key] = ""
 
     out: list[dict[str, Any]] = []
     for row in rows:
@@ -236,21 +222,13 @@ def fetch_sources_with_categories(client: Any, user_id: str) -> list[dict[str, A
         url = row.get("url")
         if not isinstance(url, str) or not url.strip():
             continue
-        inst = row.get("instruction")
-        if inst is None:
-            instruction_out: str | None = None
-        elif isinstance(inst, str):
-            s = inst.strip()
-            instruction_out = s if s else None
-        else:
-            instruction_out = None
         out.append(
             {
                 "url": url.strip(),
                 "use_rss": bool(row.get("use_rss", False)),
                 "category_id": cid_s,
                 "category_name": names.get(cid_s, ""),
-                "instruction": instruction_out,
+                "category_instruction": instructions.get(cid_s, ""),
             }
         )
     return out

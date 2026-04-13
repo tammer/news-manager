@@ -1,5 +1,5 @@
 # Scheduled fetch + summarize + Supabase upsert (Gistprism v2).
-# Loads sources and instructions from Supabase via --from-db (not sources.json / instructions.md).
+# Loads sources from Supabase via --from-db; LLM instructions come from categories (not sources.json / instructions.md).
 #
 # Repository secrets (Settings → Secrets and variables → Actions):
 #   GROQ_API_KEY

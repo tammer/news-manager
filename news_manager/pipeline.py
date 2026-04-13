@@ -31,7 +31,6 @@ from news_manager.run_report import (
 )
 from news_manager.supabase_sync import (
     fetch_sources_with_categories,
-    fetch_user_instructions,
     list_user_ids_with_sources,
     prefetch_processed_urls_for_category,
     prefetch_processed_urls_v2,
@@ -43,21 +42,6 @@ from news_manager.supabase_sync import (
 from news_manager.summarize import filter_and_summarize_outcome
 
 logger = logging.getLogger(__name__)
-
-
-def resolve_llm_ingest_instructions(
-    global_instruction: str | None,
-    per_source_instruction: str | None,
-) -> str:
-    """
-    Application code picks exactly one instruction string for the LLM (never both).
-    If per-source is non-null and non-empty after strip, use it; otherwise use global (stripped).
-    """
-    if per_source_instruction is not None:
-        per = str(per_source_instruction).strip()
-        if per != "":
-            return per
-    return (global_instruction or "").strip()
 
 
 def run_pipeline(
@@ -79,7 +63,7 @@ def run_pipeline(
     cm = content_max_chars if content_max_chars is not None else DEFAULT_CONTENT_MAX_CHARS
     out: list[CategoryResult] = []
     limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
-    llm_instructions = resolve_llm_ingest_instructions(instructions, None)
+    llm_instructions = (instructions or "").strip()
 
     for sc in categories:
         bucket: list[OutputArticle] = []
@@ -183,11 +167,11 @@ def run_pipeline_from_db(
     content_max_chars: int | None = None,
 ) -> list[UserPipelineResult]:
     """
-    For each user that has sources, load global and per-source instructions from Supabase.
-    For each source, ``resolve_llm_ingest_instructions`` sends either per-source text
-    (when set and non-empty) or global text to the model — never both.
-    Prefetch v2 ``news_articles`` / ``news_article_exclusions`` by ``category_id``,
-    then fetch → filter/summarize → upsert (v2). Same normalized URL once per category.
+    For each user that has sources, load category names and instructions from Supabase.
+    All sources under the same ``category_id`` share that category’s ``instruction`` text
+    for the LLM. Prefetch v2 ``news_articles`` / ``news_article_exclusions`` by
+    ``category_id``, then fetch → filter/summarize → upsert (v2). Same normalized URL
+    once per category.
     """
     from news_manager.config import DEFAULT_CONTENT_MAX_CHARS
 
@@ -197,7 +181,6 @@ def run_pipeline_from_db(
 
     for user_id in list_user_ids_with_sources(supabase_client):
         print(f"user {user_id}")
-        global_i = fetch_user_instructions(supabase_client, user_id)
         rows = fetch_sources_with_categories(supabase_client, user_id)
         by_cat: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for row in rows:
@@ -215,6 +198,12 @@ def run_pipeline_from_db(
             if not category_name:
                 category_name = category_id
 
+            llm_instructions = ""
+            if src_rows:
+                ci0 = src_rows[0].get("category_instruction")
+                if isinstance(ci0, str):
+                    llm_instructions = ci0.strip()
+
             bucket: list[OutputArticle] = []
             urls_done_this_category: set[str] = set()
             db_included, db_excluded = prefetch_processed_urls_v2(
@@ -222,18 +211,13 @@ def run_pipeline_from_db(
             )
 
             for row in src_rows:
-                per_inst = row.get("instruction")
-                if per_inst is not None and not isinstance(per_inst, str):
-                    per_inst = None
                 ing = IngestSource(
                     url=str(row["url"]),
                     category_id=category_id,
                     category_name=category_name,
                     use_rss=bool(row.get("use_rss", False)),
-                    instruction=per_inst,
                 )
                 src = ing.to_fetch_source()
-                llm_instructions = resolve_llm_ingest_instructions(global_i, per_inst)
                 source_label = source_base_label(ing.url)
                 try:
                     jar = cookie_jar_for_source(src)

@@ -5,7 +5,6 @@ from unittest.mock import MagicMock
 from news_manager.models import OutputArticle
 from news_manager.supabase_sync import (
     fetch_sources_with_categories,
-    fetch_user_instructions,
     list_user_ids_with_sources,
     output_article_to_upsert_row,
     output_article_to_upsert_row_v2,
@@ -277,35 +276,6 @@ def test_list_user_ids_with_sources() -> None:
     assert list_user_ids_with_sources(client) == ["a", "b"]
 
 
-def test_fetch_user_instructions_empty() -> None:
-    client = MagicMock()
-    ui = MagicMock()
-    ui.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(
-        data=[]
-    )
-
-    def table(name: str) -> MagicMock:
-        assert name == "user_instructions"
-        return ui
-
-    client.table.side_effect = table
-    assert fetch_user_instructions(client, "u1") == ""
-
-
-def test_fetch_user_instructions_found() -> None:
-    client = MagicMock()
-    ui = MagicMock()
-    ui.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(
-        data=[{"instruction": "  global  "}]
-    )
-
-    def table(name: str) -> MagicMock:
-        return ui
-
-    client.table.side_effect = table
-    assert fetch_user_instructions(client, "u1") == "global"
-
-
 def test_fetch_sources_with_categories() -> None:
     client = MagicMock()
     sources_t = MagicMock()
@@ -315,13 +285,12 @@ def test_fetch_sources_with_categories() -> None:
                 "url": "https://a.com",
                 "use_rss": True,
                 "category_id": "cid1",
-                "instruction": "per",
             }
         ]
     )
     cat_t = MagicMock()
     cat_t.select.return_value.in_.return_value.execute.return_value = MagicMock(
-        data=[{"id": "cid1", "name": "News"}]
+        data=[{"id": "cid1", "name": "News", "instruction": "  per cat  "}]
     )
 
     def table(name: str) -> MagicMock:
@@ -338,10 +307,10 @@ def test_fetch_sources_with_categories() -> None:
     assert rows[0]["use_rss"] is True
     assert rows[0]["category_id"] == "cid1"
     assert rows[0]["category_name"] == "News"
-    assert rows[0]["instruction"] == "per"
+    assert rows[0]["category_instruction"] == "per cat"
 
 
-def test_fetch_sources_with_categories_null_or_blank_instruction() -> None:
+def test_fetch_sources_with_categories_null_or_blank_category_instruction() -> None:
     client = MagicMock()
     sources_t = MagicMock()
     sources_t.select.return_value.eq.return_value.execute.return_value = MagicMock(
@@ -350,19 +319,17 @@ def test_fetch_sources_with_categories_null_or_blank_instruction() -> None:
                 "url": "https://a.com",
                 "use_rss": True,
                 "category_id": "cid1",
-                "instruction": None,
             },
             {
                 "url": "https://b.com",
                 "use_rss": False,
                 "category_id": "cid1",
-                "instruction": "   ",
             },
         ]
     )
     cat_t = MagicMock()
     cat_t.select.return_value.in_.return_value.execute.return_value = MagicMock(
-        data=[{"id": "cid1", "name": "News"}]
+        data=[{"id": "cid1", "name": "News", "instruction": None}]
     )
 
     def table(name: str) -> MagicMock:
@@ -375,8 +342,8 @@ def test_fetch_sources_with_categories_null_or_blank_instruction() -> None:
     client.table.side_effect = table
     rows = fetch_sources_with_categories(client, "u1")
     assert len(rows) == 2
-    assert rows[0]["instruction"] is None
-    assert rows[1]["instruction"] is None
+    assert rows[0]["category_instruction"] == ""
+    assert rows[1]["category_instruction"] == ""
 
 
 def test_upsert_included_article_v2_on_conflict() -> None:

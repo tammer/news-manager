@@ -67,7 +67,7 @@ Included rows use natural key **`(url, category)`**; summary fields are refreshe
 
 ### Supabase-backed sources (Gistprism v2)
 
-When **`public.sources`** and **`public.user_instructions`** are populated (and each source’s **`category_id`** points at an existing **`categories`** row for that user), run ingest without local JSON/Markdown:
+When **`public.sources`** are populated and each source’s **`category_id`** points at an existing **`public.categories`** row for that user (with optional **`categories.instruction`** text for the LLM), run ingest without local JSON/Markdown:
 
 ```bash
 news-manager --from-db
@@ -77,7 +77,7 @@ Do **not** pass **`--sources`** or **`--instructions`** with **`--from-db`**.
 
 Apply SQL in order: schema in [`20260411.md`](20260411.md), then [`sql/news_articles_v2_unique_user_category_url.sql`](sql/news_articles_v2_unique_user_category_url.sql), then [`sql/news_article_exclusions_v2.sql`](sql/news_article_exclusions_v2.sql). Ingest uses **`user_id`**, **`category_id`**, and upsert key **`(user_id, category_id, url)`** on **`news_articles`**, and **`(category_id, url)`** on exclusions.
 
-Global instructions come from **`user_instructions`**; each source may set **`sources.instruction`**. If that field is non-empty for a source, **only** those instructions are sent to the model for that source; otherwise the global instructions are used (see [`news_manager/pipeline.py`](news_manager/pipeline.py) **`resolve_llm_ingest_instructions`**).
+Filtering/summarization instructions for **`--from-db`** come from **`public.categories.instruction`** (one text per category). All sources sharing that **`category_id`** use the same instruction (see [`new_instructions_plan.md`](new_instructions_plan.md) for the schema migration).
 
 Only users with at least one **`sources`** row are processed. Set **`SUPABASE_URL`** and **`SUPABASE_SERVICE_ROLE_KEY`** as above.
 
