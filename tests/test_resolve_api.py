@@ -99,6 +99,32 @@ def test_resolve_source_success_rss_from_link(
 @patch("news_manager.source_resolve._chat_json")
 @patch("news_manager.source_resolve.fetch_html_limited")
 @patch("news_manager.source_resolve._collect_candidates_from_query")
+def test_resolve_source_pasted_feed_url(
+    mock_collect: MagicMock,
+    mock_fetch: MagicMock,
+    mock_chat: MagicMock,
+    mock_probe: MagicMock,
+) -> None:
+    """Pasting an RSS/Atom URL should resolve to itself with use_rss true."""
+    feed_url = "https://www.lrb.co.uk/feeds/rss"
+    rss_body = '<?xml version="1.0"?><rss version="2.0"><channel><title>LRB</title></channel></rss>'
+    mock_collect.return_value = [{"title": "", "href": feed_url, "body": "direct"}]
+    mock_fetch.return_value = (rss_body, feed_url)
+    mock_probe.return_value = []
+
+    out = resolve_source(feed_url, max_results=5)
+    assert out["ok"] is True
+    assert out["use_rss"] is True
+    assert out["rss_found"] is True
+    assert out["resolved_url"] == feed_url
+    assert out["homepage_url"] == feed_url
+    mock_chat.assert_not_called()
+
+
+@patch("news_manager.source_resolve._probe_feed_paths")
+@patch("news_manager.source_resolve._chat_json")
+@patch("news_manager.source_resolve.fetch_html_limited")
+@patch("news_manager.source_resolve._collect_candidates_from_query")
 def test_resolve_source_section_url_rejects_site_wide_rss(
     mock_collect: MagicMock,
     mock_fetch: MagicMock,

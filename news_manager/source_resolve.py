@@ -10,10 +10,12 @@ import socket
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
+import feedparser
 import httpx
 from bs4 import BeautifulSoup
 
 from news_manager.config import DEFAULT_HTTP_TIMEOUT, groq_model
+from news_manager.fetch import _looks_like_feed_xml
 from news_manager.llm import get_client
 from news_manager.summarize import _parse_json_response
 
@@ -418,6 +420,23 @@ def resolve_source(
         return {"ok": False, "error": "upstream_timeout", "message": "Could not fetch the homepage."}
 
     homepage_final = _scrub_url(final_url)
+
+    if _looks_like_feed_xml(html):
+        ft = (feedparser.parse(html).feed.get("title") or "").strip()
+        wt = (website_title or "").strip() or ft or urlparse(homepage_final).netloc
+        notes_parts.append("Input URL is an RSS/Atom feed; using it for ingest.")
+        notes = " ".join(notes_parts).strip()
+        return {
+            "ok": True,
+            "website_title": wt,
+            "homepage_url": homepage_final,
+            "resolved_url": homepage_final,
+            "use_rss": True,
+            "rss_found": True,
+            "confidence": confidence,
+            "notes": notes,
+        }
+
     if not website_title:
         website_title = _page_title(html) or urlparse(homepage_final).netloc
 
