@@ -19,8 +19,36 @@ from news_manager.source_resolve import resolve_source_json_body
 logger = logging.getLogger(__name__)
 
 
+def _normalize_origin(value: str | None) -> str | None:
+    if not value:
+        return None
+    return value.rstrip("/")
+
+
+def _allowed_cors_origins() -> frozenset[str]:
+    raw = os.environ.get("RESOLVE_CORS_ORIGIN", "http://localhost:5173").strip()
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    return frozenset(_normalize_origin(p) for p in parts)
+
+
 def create_app() -> Flask:
     app = Flask(__name__)
+    allowed_origins = _allowed_cors_origins()
+
+    @app.after_request
+    def add_cors_headers(response):
+        origin = request.headers.get("Origin")
+        if _normalize_origin(origin) in allowed_origins and origin:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Vary"] = "Origin"
+            response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+            response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+            response.headers["Access-Control-Max-Age"] = "86400"
+        return response
+
+    @app.route("/api/sources/resolve", methods=["OPTIONS"])
+    def resolve_preflight() -> tuple[str, int]:
+        return "", 204
 
     @app.post("/api/sources/resolve")
     def resolve() -> tuple[object, int]:
