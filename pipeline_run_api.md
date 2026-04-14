@@ -4,7 +4,7 @@ This document describes the async pipeline endpoints for running `news-manager` 
 
 ## Purpose
 
-Expose the same run controls available in `news-manager` CLI (`--category`, `--source`, `--max-articles`, `--timeout`, `--content-max-chars`, `--user-id`) through an authenticated API.
+Expose the same run controls available in `news-manager` CLI (`--category`, `--source`, `--max-articles`, `--timeout`, `--content-max-chars`, `--user-id`, `--reprocess`) through an authenticated API.
 
 Runs are asynchronous:
 - `POST /api/pipeline/run` starts a run and returns a job id.
@@ -34,6 +34,7 @@ Runs are asynchronous:
 | `max_articles` | integer | `max_articles` |
 | `timeout` | number | `http_timeout` |
 | `content_max_chars` | integer | `content_max_chars` |
+| `reprocess` | boolean | default `false`; when `true`, delete existing `news_articles` / `news_article_exclusions` rows for a URL in the prefetched cache for that category, then re-fetch and run the LLM instead of skipping |
 
 ### Start response
 
@@ -86,8 +87,49 @@ Runs are asynchronous:
 - `succeeded`
 - `failed`
 
-On `succeeded`, `result` contains the same per-user/per-category output shape as the pipeline internals.
-On `failed`, `error` contains a failure message.
+On `succeeded`, `result` is a **JSON array** of every article URL the run processed (including cache short-circuits, fetch failures, and LLM decisions). Each element is an object with:
+
+| Field | Type | Notes |
+|--------|------|--------|
+| `date` | string or null | |
+| `full_summary` | string or null | Omitted from raw article body; not the full HTML content |
+| `short_summary` | string or null | |
+| `source` | string | Source hostname/label |
+| `title` | string or null | May be null for cache-only rows where only the URL is known |
+| `url` | string | |
+| `included` | boolean | `true` if the article was included for this run |
+| `reason` | string or null | `null` when `included` is true; otherwise why it was excluded or skipped |
+
+There is **no** `content` field (raw article body is never included).
+
+Example fragment for a succeeded job:
+
+```json
+"result": [
+  {
+    "date": "2026-04-14",
+    "full_summary": "...",
+    "short_summary": "...",
+    "source": "example.com",
+    "title": "Headline",
+    "url": "https://example.com/a",
+    "included": true,
+    "reason": null
+  },
+  {
+    "date": null,
+    "full_summary": null,
+    "short_summary": null,
+    "source": "example.com",
+    "title": null,
+    "url": "https://example.com/b",
+    "included": false,
+    "reason": "Already excluded"
+  }
+]
+```
+
+On `failed`, `error` contains a failure message and `result` is typically null.
 
 ## Errors
 

@@ -101,3 +101,11 @@ class UserPipelineResult:
             "user_id": self.user_id,
             "categories": [c.to_json_dict() for c in self.categories],
         }
+
+
+@dataclass
+class PipelineDbRunResult:
+    """DB pipeline run: nested per-user results plus a flat per-article decision log."""
+
+    users: list[UserPipelineResult] = field(default_factory=list)
+    article_decisions: list[dict[str, Any]] = field(default_factory=list)

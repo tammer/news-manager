@@ -136,6 +136,10 @@ def _parse_pipeline_run_request(
     if not isinstance(content_max_chars, int):
         return None, _json_error("'content_max_chars' must be an integer.", status=400)
 
+    reprocess = body.get("reprocess", False)
+    if not isinstance(reprocess, bool):
+        return None, _json_error("'reprocess' must be a boolean.", status=400)
+
     return (
         PipelineRunParams(
             user_id=auth_user_id,
@@ -144,6 +148,7 @@ def _parse_pipeline_run_request(
             max_articles=max_articles,
             timeout=float(timeout),
             content_max_chars=content_max_chars,
+            reprocess=reprocess,
         ),
         None,
     )

@@ -4,6 +4,8 @@ from unittest.mock import MagicMock
 
 from news_manager.models import OutputArticle
 from news_manager.supabase_sync import (
+    delete_excluded_url_v2,
+    delete_included_article_v2,
     fetch_sources_with_categories,
     list_user_ids_with_sources,
     output_article_to_upsert_row_v2,
@@ -218,3 +220,66 @@ def test_upsert_excluded_url_v2_passes_why() -> None:
         upsert_excluded_url_v2(client, "https://x.com/b", "c1", why="Not a match.") is None
     )
     assert excl_table.upsert.call_args[0][0][0]["why"] == "Not a match."
+
+
+def test_delete_included_article_v2_matches_normalized_url() -> None:
+    from news_manager.fetch import normalize_url
+
+    stored = "https://example.com/a?utm=x"
+    nu = normalize_url(stored)
+
+    sel = MagicMock()
+    sel.execute.return_value = MagicMock(data=[{"url": stored}])
+    news_select = MagicMock()
+    news_select.select.return_value.eq.return_value.eq.return_value = sel
+
+    dele = MagicMock()
+    dele.execute.return_value = MagicMock()
+    news_delete = MagicMock()
+    news_delete.delete.return_value.eq.return_value.eq.return_value.eq.return_value = dele
+
+    client = MagicMock()
+    _news_i = 0
+
+    def table(name: str) -> MagicMock:
+        nonlocal _news_i
+        if name == "news_articles":
+            _news_i += 1
+            return news_select if _news_i == 1 else news_delete
+        raise AssertionError(name)
+
+    client.table.side_effect = table
+    assert delete_included_article_v2(client, "u1", "c1", nu) is None
+    dele.execute.assert_called_once()
+
+
+def test_delete_excluded_url_v2_matches_normalized_url() -> None:
+    from news_manager.fetch import normalize_url
+
+    stored = "https://ex.com/p?q=1"
+    nu = normalize_url(stored)
+
+    sel = MagicMock()
+    sel.execute.return_value = MagicMock(data=[{"url": stored}])
+    excl = MagicMock()
+    excl.select.return_value.eq.return_value = sel
+
+    dele = MagicMock()
+    dele.execute.return_value = MagicMock()
+    excl2 = MagicMock()
+    excl2.delete.return_value.eq.return_value.eq.return_value = dele
+
+    client = MagicMock()
+    first = True
+
+    def table(name: str) -> MagicMock:
+        nonlocal first
+        assert name == "news_article_exclusions"
+        if first:
+            first = False
+            return excl
+        return excl2
+
+    client.table.side_effect = table
+    assert delete_excluded_url_v2(client, "c1", nu) is None
+    dele.execute.assert_called_once()

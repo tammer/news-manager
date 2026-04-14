@@ -9,7 +9,7 @@ from threading import Lock, Thread
 from typing import Any, Callable, Literal
 from uuid import uuid4
 
-from news_manager.models import UserPipelineResult
+from news_manager.models import PipelineDbRunResult
 from news_manager.pipeline import run_pipeline_from_db
 from news_manager.supabase_sync import create_supabase_client
 
@@ -26,6 +26,7 @@ class PipelineRunParams:
     max_articles: int
     timeout: float
     content_max_chars: int
+    reprocess: bool = False
 
     def to_json_dict(self) -> dict[str, Any]:
         return {
@@ -35,6 +36,7 @@ class PipelineRunParams:
             "max_articles": self.max_articles,
             "timeout": self.timeout,
             "content_max_chars": self.content_max_chars,
+            "reprocess": self.reprocess,
         }
 
 
@@ -71,16 +73,12 @@ def _now_iso() -> str:
     return datetime.now(tz=UTC).isoformat().replace("+00:00", "Z")
 
 
-def _serialize_results(results: list[UserPipelineResult]) -> list[dict[str, Any]]:
-    return [row.to_json_dict() for row in results]
-
-
 def _run_job(
     *,
     job_id: str,
     params: PipelineRunParams,
     supabase_client_factory: Callable[[], Any],
-    pipeline_runner: Callable[..., list[UserPipelineResult]],
+    pipeline_runner: Callable[..., PipelineDbRunResult],
 ) -> None:
     with _jobs_lock:
         job = _jobs.get(job_id)
@@ -99,8 +97,9 @@ def _run_job(
             user_id_selector=params.user_id,
             category_selector=params.category,
             source_selector=params.source,
+            reprocess=params.reprocess,
         )
-        payload = _serialize_results(results)
+        payload = results.article_decisions
     except Exception as e:
         logger.exception("Pipeline job %s failed", job_id)
         with _jobs_lock:
@@ -125,7 +124,7 @@ def start_pipeline_job(
     *,
     params: PipelineRunParams,
     supabase_client_factory: Callable[[], Any] = create_supabase_client,
-    pipeline_runner: Callable[..., list[UserPipelineResult]] = run_pipeline_from_db,
+    pipeline_runner: Callable[..., PipelineDbRunResult] = run_pipeline_from_db,
 ) -> dict[str, Any]:
     job_id = str(uuid4())
     job = _PipelineRunJob(

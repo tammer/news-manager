@@ -10,6 +10,7 @@ from unittest.mock import patch
 import jwt
 import pytest
 
+from news_manager.models import PipelineDbRunResult
 from news_manager.pipeline_jobs import PipelineRunParams, get_pipeline_job, start_pipeline_job
 from news_manager.resolve_app import create_app
 
@@ -156,10 +157,10 @@ def test_pipeline_jobs_async_lifecycle_success() -> None:
         content_max_chars=1000,
     )
 
-    def runner(**kwargs: Any) -> list:
+    def runner(**kwargs: Any) -> PipelineDbRunResult:
         _ = kwargs
         time.sleep(0.05)
-        return []
+        return PipelineDbRunResult(users=[], article_decisions=[])
 
     job = start_pipeline_job(
         params=params,
@@ -191,7 +192,7 @@ def test_pipeline_jobs_async_lifecycle_failure() -> None:
         content_max_chars=1000,
     )
 
-    def runner(**kwargs: Any) -> list:
+    def runner(**kwargs: Any) -> PipelineDbRunResult:
         _ = kwargs
         time.sleep(0.01)
         raise RuntimeError("boom")

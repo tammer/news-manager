@@ -248,3 +248,79 @@ def upsert_excluded_url_v2(
     except Exception as e:
         return f"Supabase exclusion insert: {e}"
     return None
+
+
+def delete_included_article_v2(
+    client: Any, user_id: str, category_id: str, normalized_url: str
+) -> str | None:
+    """
+    Delete one ``news_articles`` row whose stored ``url`` normalizes to ``normalized_url``.
+    Returns None on success or if no matching row; otherwise an error message.
+    """
+    try:
+        r = (
+            client.table("news_articles")
+            .select("url")
+            .eq("user_id", user_id)
+            .eq("category_id", category_id)
+            .execute()
+        )
+    except Exception as e:
+        return f"Supabase delete included (select): {e}"
+    url_to_delete: str | None = None
+    for row in r.data or []:
+        u = row.get("url")
+        if isinstance(u, str) and u.strip() and normalize_url(u) == normalized_url:
+            url_to_delete = u.strip()
+            break
+    if url_to_delete is None:
+        return None
+    try:
+        (
+            client.table("news_articles")
+            .delete()
+            .eq("user_id", user_id)
+            .eq("category_id", category_id)
+            .eq("url", url_to_delete)
+            .execute()
+        )
+    except Exception as e:
+        return f"Supabase delete included: {e}"
+    return None
+
+
+def delete_excluded_url_v2(
+    client: Any, category_id: str, normalized_url: str
+) -> str | None:
+    """
+    Delete one ``news_article_exclusions`` row whose stored ``url`` normalizes to
+    ``normalized_url``. Returns None on success or if no matching row; otherwise an error message.
+    """
+    try:
+        r = (
+            client.table("news_article_exclusions")
+            .select("url")
+            .eq("category_id", category_id)
+            .execute()
+        )
+    except Exception as e:
+        return f"Supabase delete excluded (select): {e}"
+    url_to_delete: str | None = None
+    for row in r.data or []:
+        u = row.get("url")
+        if isinstance(u, str) and u.strip() and normalize_url(u) == normalized_url:
+            url_to_delete = u.strip()
+            break
+    if url_to_delete is None:
+        return None
+    try:
+        (
+            client.table("news_article_exclusions")
+            .delete()
+            .eq("category_id", category_id)
+            .eq("url", url_to_delete)
+            .execute()
+        )
+    except Exception as e:
+        return f"Supabase delete excluded: {e}"
+    return None

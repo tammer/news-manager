@@ -70,6 +70,11 @@ def main(argv: list[str] | None = None) -> int:
         help=f"Max article body chars sent to the LLM (default: {DEFAULT_CONTENT_MAX_CHARS})",
     )
     parser.add_argument(
+        "--reprocess",
+        action="store_true",
+        help="Delete cached news_articles / news_article_exclusions rows and re-fetch + LLM for those URLs.",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -96,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         sb = create_supabase_client()
-        run_pipeline_from_db(
+        _ = run_pipeline_from_db(
             supabase_client=sb,
             max_articles=args.max_articles,
             http_timeout=args.timeout,
@@ -104,6 +109,7 @@ def main(argv: list[str] | None = None) -> int:
             user_id_selector=args.user_id,
             category_selector=args.category,
             source_selector=args.source,
+            reprocess=args.reprocess,
         )
     except RuntimeError as e:
         print(str(e), file=sys.stderr)
