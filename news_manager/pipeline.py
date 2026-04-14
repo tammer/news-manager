@@ -47,6 +47,13 @@ def _normalized_selector(selector: str | None) -> str | None:
     return value.casefold() if value else None
 
 
+def _trimmed_selector(selector: str | None) -> str | None:
+    if selector is None:
+        return None
+    value = selector.strip()
+    return value if value else None
+
+
 def _matches_selector(row: dict[str, Any], selector: str, keys: tuple[str, ...]) -> bool:
     for key in keys:
         value = row.get(key)
@@ -61,6 +68,7 @@ def run_pipeline_from_db(
     max_articles: int = DEFAULT_MAX_ARTICLES,
     http_timeout: float = DEFAULT_HTTP_TIMEOUT,
     content_max_chars: int | None = None,
+    user_id_selector: str | None = None,
     category_selector: str | None = None,
     source_selector: str | None = None,
 ) -> list[UserPipelineResult]:
@@ -76,10 +84,18 @@ def run_pipeline_from_db(
     cm = content_max_chars if content_max_chars is not None else DEFAULT_CONTENT_MAX_CHARS
     limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
     out: list[UserPipelineResult] = []
+    user_id_selector_trimmed = _trimmed_selector(user_id_selector)
     category_selector_norm = _normalized_selector(category_selector)
     source_selector_norm = _normalized_selector(source_selector)
+    user_ids = list_user_ids_with_sources(supabase_client)
+    if user_id_selector_trimmed is not None:
+        user_ids = [uid for uid in user_ids if uid == user_id_selector_trimmed]
+        if not user_ids:
+            logger.info(
+                "No users matched --user-id selector: %s", user_id_selector_trimmed
+            )
 
-    for user_id in list_user_ids_with_sources(supabase_client):
+    for user_id in user_ids:
         print(f"user {user_id}")
         rows = fetch_sources_with_categories(supabase_client, user_id)
         if category_selector_norm is not None:

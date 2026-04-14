@@ -1,2 +1,1 @@
-make --from db the default
-
+Now I want to have an API endpoint to run news-manager. I basically want the same capabilities as the CLI available via our API.

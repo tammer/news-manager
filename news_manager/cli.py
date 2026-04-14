@@ -43,6 +43,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Limit --from-db ingest to one source (match by source id or name).",
     )
     parser.add_argument(
+        "--user-id",
+        type=str,
+        default=None,
+        help="Limit ingest to one user (exact user_id match).",
+    )
+    parser.add_argument(
         "--max-articles",
         type=int,
         default=DEFAULT_MAX_ARTICLES,
@@ -95,6 +101,7 @@ def main(argv: list[str] | None = None) -> int:
             max_articles=args.max_articles,
             http_timeout=args.timeout,
             content_max_chars=args.content_max_chars,
+            user_id_selector=args.user_id,
             category_selector=args.category,
             source_selector=args.source,
         )
