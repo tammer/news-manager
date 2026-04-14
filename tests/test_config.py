@@ -1,165 +1,51 @@
-"""Tests for config loading and validation."""
-
-import json
-from pathlib import Path
+"""Tests for DB-mode config helpers."""
 
 import pytest
 
-from news_manager.config import read_instructions, read_sources_json
-from news_manager.models import CategoryResult, OutputArticle, Source
+from news_manager.config import (
+    assert_resolve_api_supabase_auth_config,
+    groq_api_key,
+    supabase_jwt_secret_optional,
+    supabase_settings,
+)
 
 
-def test_read_sources_json_valid(tmp_path: Path) -> None:
-    p = tmp_path / "sources.json"
-    p.write_text(
-        json.dumps(
-            [
-                {"category": "News", "sources": ["cnn.com"]},
-                {"category": "Science", "sources": ["a.com", "b.com"]},
-            ]
-        ),
-        encoding="utf-8",
-    )
-    cats = read_sources_json(p)
-    assert len(cats) == 2
-    assert cats[0].category == "News"
-    assert cats[0].sources == [Source(url="cnn.com", kind="html", filter=True)]
-    assert cats[1].sources == [
-        Source(url="a.com", kind="html", filter=True),
-        Source(url="b.com", kind="html", filter=True),
-    ]
+def test_groq_api_key_returns_trimmed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GROQ_API_KEY", "  abc123  ")
+    assert groq_api_key() == "abc123"
 
 
-def test_read_sources_json_invalid_not_array(tmp_path: Path) -> None:
-    p = tmp_path / "sources.json"
-    p.write_text('{"category": "x"}', encoding="utf-8")
-    with pytest.raises(ValueError, match="array"):
-        read_sources_json(p)
+def test_groq_api_key_raises_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    with pytest.raises(ValueError, match="GROQ_API_KEY is not set"):
+        groq_api_key()
 
 
-def test_read_sources_json_invalid_category(tmp_path: Path) -> None:
-    p = tmp_path / "sources.json"
-    p.write_text(json.dumps([{"category": "", "sources": ["a.com"]}]), encoding="utf-8")
-    with pytest.raises(ValueError, match="category"):
-        read_sources_json(p)
+def test_supabase_settings_returns_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "service-role-key")
+    assert supabase_settings() == ("https://example.supabase.co", "service-role-key")
 
 
-def test_read_instructions(tmp_path: Path) -> None:
-    p = tmp_path / "instructions.md"
-    p.write_text("Hello **world**", encoding="utf-8")
-    assert read_instructions(p) == "Hello **world**"
+def test_supabase_settings_raises_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
+    with pytest.raises(ValueError, match="SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY"):
+        supabase_settings()
 
 
-def test_read_sources_json_rss_object(tmp_path: Path) -> None:
-    p = tmp_path / "sources.json"
-    p.write_text(
-        json.dumps(
-            [
-                {
-                    "category": "Tech",
-                    "sources": [
-                        {"url": "https://example.substack.com/feed", "kind": "rss"},
-                    ],
-                }
-            ]
-        ),
-        encoding="utf-8",
-    )
-    cats = read_sources_json(p)
-    assert cats[0].sources[0] == Source(
-        url="https://example.substack.com/feed",
-        kind="rss",
-        filter=True,
-    )
+def test_supabase_jwt_secret_optional(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SUPABASE_JWT_SECRET", raising=False)
+    assert supabase_jwt_secret_optional() is None
+    monkeypatch.setenv("SUPABASE_JWT_SECRET", "  secret  ")
+    assert supabase_jwt_secret_optional() == "secret"
 
 
-def test_read_sources_json_filter_false_per_source(tmp_path: Path) -> None:
-    p = tmp_path / "sources.json"
-    p.write_text(
-        json.dumps(
-            [
-                {
-                    "category": "X",
-                    "sources": [
-                        {"url": "https://a.com", "kind": "html", "filter": False},
-                    ],
-                }
-            ]
-        ),
-        encoding="utf-8",
-    )
-    cats = read_sources_json(p)
-    assert cats[0].sources[0].filter is False
+def test_assert_resolve_api_supabase_auth_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_JWT_SECRET", raising=False)
+    with pytest.raises(ValueError, match="At least one is required for resolve-api"):
+        assert_resolve_api_supabase_auth_config()
 
-
-def test_read_sources_json_cookies_on_source(tmp_path: Path) -> None:
-    p = tmp_path / "sources.json"
-    p.write_text(
-        json.dumps(
-            [
-                {
-                    "category": "X",
-                    "sources": [
-                        {
-                            "url": "https://paywall.example/",
-                            "kind": "html",
-                            "cookies": "secrets/paywall.json",
-                        }
-                    ],
-                }
-            ]
-        ),
-        encoding="utf-8",
-    )
-    cats = read_sources_json(p)
-    assert cats[0].sources[0].cookies == "secrets/paywall.json"
-
-
-def test_read_sources_json_filter_must_be_boolean_on_source(tmp_path: Path) -> None:
-    p = tmp_path / "sources.json"
-    p.write_text(
-        json.dumps(
-            [
-                {
-                    "category": "X",
-                    "sources": [{"url": "https://a.com", "filter": "yes"}],
-                }
-            ]
-        ),
-        encoding="utf-8",
-    )
-    with pytest.raises(ValueError, match="filter"):
-        read_sources_json(p)
-
-
-def test_merge_category_output_roundtrip(tmp_path: Path) -> None:
-    """Output shape: categories in order, empty articles allowed."""
-    out = [
-        CategoryResult(
-            category="A",
-            articles=[
-                OutputArticle(
-                    title="t",
-                    date=None,
-                    content="c",
-                    url="https://e",
-                    short_summary="s",
-                    full_summary="f",
-                    source="e.example.com",
-                )
-            ],
-        ),
-        CategoryResult(category="B", articles=[]),
-    ]
-    path = tmp_path / "out.json"
-    data_wr = [c.to_json_dict() for c in out]
-    path.write_text(
-        json.dumps(data_wr, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-    data = json.loads(path.read_text(encoding="utf-8"))
-    assert data[0]["category"] == "A"
-    assert len(data[0]["articles"]) == 1
-    assert data[0]["articles"][0]["source"] == "e.example.com"
-    assert data[1]["category"] == "B"
-    assert data[1]["articles"] == []
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    assert_resolve_api_supabase_auth_config()

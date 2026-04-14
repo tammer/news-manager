@@ -41,14 +41,6 @@ class IngestSource:
 
 
 @dataclass
-class SourceCategory:
-    """One row from sources.json."""
-
-    category: str
-    sources: list[Source]
-
-
-@dataclass
 class RawArticle:
     """Article after fetch, before summarization."""
 

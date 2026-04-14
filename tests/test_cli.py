@@ -2,6 +2,8 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from news_manager.cli import main
 
 
@@ -35,8 +37,13 @@ def test_main_from_db_passes_category_and_source_selectors(
     assert mock_run_from_db.call_args.kwargs["source_selector"] == "sid-123"
 
 
-def test_main_rejects_selectors_without_from_db(capsys) -> None:
-    code = main(["--category", "News", "--sources", "sources.json", "--instructions", "instructions.md"])
-    captured = capsys.readouterr()
-    assert code == 2
-    assert "--category/--source can only be used with --from-db." in captured.err
+def test_main_rejects_removed_v1_flags() -> None:
+    with patch("news_manager.cli.load_dotenv_if_present"):
+        with patch("news_manager.cli.supabase_settings"), patch(
+            "news_manager.cli.groq_api_key"
+        ), patch("news_manager.cli.create_supabase_client"), patch(
+            "news_manager.cli.run_pipeline_from_db"
+        ):
+            with pytest.raises(SystemExit) as exc:
+                main(["--sources", "sources.json", "--instructions", "instructions.md"])
+    assert exc.value.code == 2

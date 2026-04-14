@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from pathlib import Path
 
 from news_manager.config import (
     DEFAULT_CONTENT_MAX_CHARS,
@@ -13,11 +12,9 @@ from news_manager.config import (
     DEFAULT_MAX_ARTICLES,
     groq_api_key,
     load_dotenv_if_present,
-    read_instructions,
-    read_sources_json,
     supabase_settings,
 )
-from news_manager.pipeline import run_pipeline, run_pipeline_from_db
+from news_manager.pipeline import run_pipeline_from_db
 from news_manager.supabase_sync import create_supabase_client
 
 
@@ -31,7 +28,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--from-db",
         action="store_true",
-        help="Load sources and instructions from Supabase (Gistprism v2); do not pass --sources/--instructions.",
+        help="Deprecated no-op. DB-backed ingest is now the only mode.",
     )
     parser.add_argument(
         "--category",
@@ -44,18 +41,6 @@ def main(argv: list[str] | None = None) -> int:
         type=str,
         default=None,
         help="Limit --from-db ingest to one source (match by source id or name).",
-    )
-    parser.add_argument(
-        "--sources",
-        type=Path,
-        default=None,
-        help="Path to sources.json (required unless --from-db)",
-    )
-    parser.add_argument(
-        "--instructions",
-        type=Path,
-        default=None,
-        help="Path to instructions.md (required unless --from-db)",
     )
     parser.add_argument(
         "--max-articles",
@@ -91,26 +76,6 @@ def main(argv: list[str] | None = None) -> int:
         format="%(levelname)s: %(message)s",
     )
 
-    if args.from_db:
-        if args.sources is not None or args.instructions is not None:
-            print(
-                "Do not pass --sources or --instructions with --from-db.",
-                file=sys.stderr,
-            )
-            return 2
-    elif args.category is not None or args.source is not None:
-        print(
-            "--category/--source can only be used with --from-db.",
-            file=sys.stderr,
-        )
-        return 2
-    elif args.sources is None or args.instructions is None:
-        print(
-            "--sources and --instructions are required unless you pass --from-db.",
-            file=sys.stderr,
-        )
-        return 2
-
     try:
         supabase_settings()
     except ValueError as e:
@@ -123,40 +88,16 @@ def main(argv: list[str] | None = None) -> int:
         print(str(e), file=sys.stderr)
         return 1
 
-    if not args.from_db:
-        assert args.sources is not None and args.instructions is not None
-        try:
-            categories = read_sources_json(args.sources)
-        except (OSError, ValueError) as e:
-            print(str(e), file=sys.stderr)
-            return 1
-
-        try:
-            instructions = read_instructions(args.instructions)
-        except OSError as e:
-            print(str(e), file=sys.stderr)
-            return 1
-
     try:
         sb = create_supabase_client()
-        if args.from_db:
-            run_pipeline_from_db(
-                supabase_client=sb,
-                max_articles=args.max_articles,
-                http_timeout=args.timeout,
-                content_max_chars=args.content_max_chars,
-                category_selector=args.category,
-                source_selector=args.source,
-            )
-        else:
-            run_pipeline(
-                categories,
-                instructions,
-                supabase_client=sb,
-                max_articles=args.max_articles,
-                http_timeout=args.timeout,
-                content_max_chars=args.content_max_chars,
-            )
+        run_pipeline_from_db(
+            supabase_client=sb,
+            max_articles=args.max_articles,
+            http_timeout=args.timeout,
+            content_max_chars=args.content_max_chars,
+            category_selector=args.category,
+            source_selector=args.source,
+        )
     except RuntimeError as e:
         print(str(e), file=sys.stderr)
         return 1
