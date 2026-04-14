@@ -282,6 +282,8 @@ def test_fetch_sources_with_categories() -> None:
     sources_t.select.return_value.eq.return_value.execute.return_value = MagicMock(
         data=[
             {
+                "id": "sid1",
+                "name": "A Source",
                 "url": "https://a.com",
                 "use_rss": True,
                 "category_id": "cid1",
@@ -304,6 +306,8 @@ def test_fetch_sources_with_categories() -> None:
     rows = fetch_sources_with_categories(client, "u1")
     assert len(rows) == 1
     assert rows[0]["url"] == "https://a.com"
+    assert rows[0]["source_id"] == "sid1"
+    assert rows[0]["source_name"] == "A Source"
     assert rows[0]["use_rss"] is True
     assert rows[0]["category_id"] == "cid1"
     assert rows[0]["category_name"] == "News"
@@ -316,11 +320,13 @@ def test_fetch_sources_with_categories_null_or_blank_category_instruction() -> N
     sources_t.select.return_value.eq.return_value.execute.return_value = MagicMock(
         data=[
             {
+                "id": "sid1",
                 "url": "https://a.com",
                 "use_rss": True,
                 "category_id": "cid1",
             },
             {
+                "id": "sid2",
                 "url": "https://b.com",
                 "use_rss": False,
                 "category_id": "cid1",
@@ -342,6 +348,10 @@ def test_fetch_sources_with_categories_null_or_blank_category_instruction() -> N
     client.table.side_effect = table
     rows = fetch_sources_with_categories(client, "u1")
     assert len(rows) == 2
+    assert rows[0]["source_id"] == "sid1"
+    assert rows[0]["source_name"] == ""
+    assert rows[1]["source_id"] == "sid2"
+    assert rows[1]["source_name"] == ""
     assert rows[0]["category_instruction"] == ""
     assert rows[1]["category_instruction"] == ""
 

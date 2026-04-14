@@ -44,6 +44,21 @@ from news_manager.summarize import filter_and_summarize_outcome
 logger = logging.getLogger(__name__)
 
 
+def _normalized_selector(selector: str | None) -> str | None:
+    if selector is None:
+        return None
+    value = selector.strip()
+    return value.casefold() if value else None
+
+
+def _matches_selector(row: dict[str, Any], selector: str, keys: tuple[str, ...]) -> bool:
+    for key in keys:
+        value = row.get(key)
+        if isinstance(value, str) and value.strip().casefold() == selector:
+            return True
+    return False
+
+
 def run_pipeline(
     categories: list[SourceCategory],
     instructions: str,
@@ -165,6 +180,8 @@ def run_pipeline_from_db(
     max_articles: int = DEFAULT_MAX_ARTICLES,
     http_timeout: float = DEFAULT_HTTP_TIMEOUT,
     content_max_chars: int | None = None,
+    category_selector: str | None = None,
+    source_selector: str | None = None,
 ) -> list[UserPipelineResult]:
     """
     For each user that has sources, load category names and instructions from Supabase.
@@ -178,10 +195,32 @@ def run_pipeline_from_db(
     cm = content_max_chars if content_max_chars is not None else DEFAULT_CONTENT_MAX_CHARS
     limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
     out: list[UserPipelineResult] = []
+    category_selector_norm = _normalized_selector(category_selector)
+    source_selector_norm = _normalized_selector(source_selector)
 
     for user_id in list_user_ids_with_sources(supabase_client):
         print(f"user {user_id}")
         rows = fetch_sources_with_categories(supabase_client, user_id)
+        if category_selector_norm is not None:
+            rows = [
+                row
+                for row in rows
+                if _matches_selector(
+                    row,
+                    category_selector_norm,
+                    ("category_id", "category_name"),
+                )
+            ]
+        if source_selector_norm is not None:
+            rows = [
+                row
+                for row in rows
+                if _matches_selector(
+                    row,
+                    source_selector_norm,
+                    ("source_id", "source_name"),
+                )
+            ]
         by_cat: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for row in rows:
             by_cat[str(row["category_id"])].append(row)

@@ -75,6 +75,15 @@ news-manager --from-db
 
 Do **not** pass **`--sources`** or **`--instructions`** with **`--from-db`**.
 
+To process only one category or one source, pass **`--category`** and/or **`--source`**
+with either the row **id** or **name**:
+
+```bash
+news-manager --from-db --category "News"
+news-manager --from-db --category 9f9f8... --source "The Star"
+news-manager --from-db --source 2c7d6...
+```
+
 Apply SQL in order: schema in [`20260411.md`](20260411.md), then [`sql/news_articles_v2_unique_user_category_url.sql`](sql/news_articles_v2_unique_user_category_url.sql), then [`sql/news_article_exclusions_v2.sql`](sql/news_article_exclusions_v2.sql). Ingest uses **`user_id`**, **`category_id`**, and upsert key **`(user_id, category_id, url)`** on **`news_articles`**, and **`(category_id, url)`** on exclusions.
 
 Filtering/summarization instructions for **`--from-db`** come from **`public.categories.instruction`** (one text per category). All sources sharing that **`category_id`** use the same instruction (see [`new_instructions_plan.md`](new_instructions_plan.md) for the schema migration).
@@ -123,6 +132,8 @@ Example:
 | Flag | Description |
 |------|-------------|
 | `--from-db` | Load sources and instructions from Supabase (v2); omit `--sources` / `--instructions` |
+| `--category` | With `--from-db`, process only one category (match by category id or name) |
+| `--source` | With `--from-db`, process only one source (match by source id or name) |
 | `--sources` | Path to `sources.json` (required unless `--from-db`) |
 | `--instructions` | Path to `instructions.md` (required unless `--from-db`) |
 | `--max-articles` | Max articles to fetch per source (default: 15) |

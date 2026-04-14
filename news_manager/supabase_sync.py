@@ -163,18 +163,28 @@ def list_user_ids_with_sources(client: Any) -> list[str]:
 def fetch_sources_with_categories(client: Any, user_id: str) -> list[dict[str, Any]]:
     """
     Sources for user with category display name and instruction from public.categories.
-    Each dict: url, use_rss, category_id, category_name, category_instruction
+    Each dict: source_id, source_name, url, use_rss, category_id, category_name,
+    category_instruction
     (``category_instruction`` is stripped text, or ``""`` when null / blank).
     """
     try:
         sr = (
             client.table("sources")
-            .select("url, use_rss, category_id")
+            .select("id, name, url, use_rss, category_id")
             .eq("user_id", user_id)
             .execute()
         )
-    except Exception as e:
-        raise RuntimeError(f"Supabase fetch_sources failed: {e}") from e
+    except Exception:
+        # Some v2 deployments may not have sources.name; retry without it.
+        try:
+            sr = (
+                client.table("sources")
+                .select("id, url, use_rss, category_id")
+                .eq("user_id", user_id)
+                .execute()
+            )
+        except Exception as e:
+            raise RuntimeError(f"Supabase fetch_sources failed: {e}") from e
     rows = sr.data or []
     if not rows:
         return []
@@ -224,6 +234,12 @@ def fetch_sources_with_categories(client: Any, user_id: str) -> list[dict[str, A
             continue
         out.append(
             {
+                "source_id": str(row.get("id") or ""),
+                "source_name": (
+                    row.get("name").strip()
+                    if isinstance(row.get("name"), str)
+                    else ""
+                ),
                 "url": url.strip(),
                 "use_rss": bool(row.get("use_rss", False)),
                 "category_id": cid_s,

@@ -34,6 +34,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Load sources and instructions from Supabase (Gistprism v2); do not pass --sources/--instructions.",
     )
     parser.add_argument(
+        "--category",
+        type=str,
+        default=None,
+        help="Limit --from-db ingest to one category (match by category id or name).",
+    )
+    parser.add_argument(
+        "--source",
+        type=str,
+        default=None,
+        help="Limit --from-db ingest to one source (match by source id or name).",
+    )
+    parser.add_argument(
         "--sources",
         type=Path,
         default=None,
@@ -86,6 +98,12 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
+    elif args.category is not None or args.source is not None:
+        print(
+            "--category/--source can only be used with --from-db.",
+            file=sys.stderr,
+        )
+        return 2
     elif args.sources is None or args.instructions is None:
         print(
             "--sources and --instructions are required unless you pass --from-db.",
@@ -127,6 +145,8 @@ def main(argv: list[str] | None = None) -> int:
                 max_articles=args.max_articles,
                 http_timeout=args.timeout,
                 content_max_chars=args.content_max_chars,
+                category_selector=args.category,
+                source_selector=args.source,
             )
         else:
             run_pipeline(
