@@ -27,6 +27,7 @@ def test_run_pipeline_from_db_resolves_instructions_and_upserts_v2(
     mock_list_users.return_value = ["user-1"]
     mock_sources.return_value = [
         {
+            "source_id": "sid-1",
             "url": "https://a.com",
             "use_rss": False,
             "category_id": "cid-1",
@@ -96,6 +97,7 @@ def test_run_pipeline_from_db_excluded_passes_exclude_why(
     mock_list_users.return_value = ["user-1"]
     mock_sources.return_value = [
         {
+            "source_id": "sid-1",
             "url": "https://a.com",
             "use_rss": False,
             "category_id": "cid-1",
@@ -116,7 +118,12 @@ def test_run_pipeline_from_db_excluded_passes_exclude_why(
     sb = MagicMock()
     result = run_pipeline_from_db(supabase_client=sb, max_articles=5, http_timeout=1.0)
     mock_upsert_excl.assert_called_once_with(
-        sb, "https://u", "cid-1", "Wrong topic for this category."
+        sb,
+        "user-1",
+        "cid-1",
+        "sid-1",
+        "https://u",
+        "Wrong topic for this category.",
     )
     assert len(result.article_decisions) == 1
     d = result.article_decisions[0]
@@ -309,6 +316,7 @@ def test_run_pipeline_reprocess_included_deletes_and_runs_llm(
     mock_list_users.return_value = ["user-1"]
     mock_sources.return_value = [
         {
+            "source_id": "sid-1",
             "url": "https://a.com",
             "use_rss": False,
             "category_id": "cid-1",
@@ -367,6 +375,7 @@ def test_run_pipeline_reprocess_excluded_deletes_and_runs_llm(
     mock_list_users.return_value = ["user-1"]
     mock_sources.return_value = [
         {
+            "source_id": "sid-1",
             "url": "https://a.com",
             "use_rss": False,
             "category_id": "cid-1",
@@ -398,7 +407,7 @@ def test_run_pipeline_reprocess_excluded_deletes_and_runs_llm(
     run_pipeline_from_db(
         supabase_client=sb, max_articles=5, http_timeout=1.0, reprocess=True
     )
-    mock_delete_exc.assert_called_once_with(sb, "cid-1", nu)
+    mock_delete_exc.assert_called_once_with(sb, "user-1", "cid-1", nu)
     mock_outcome.assert_called_once()
 
 
@@ -420,6 +429,7 @@ def test_run_pipeline_cached_included_skips_without_reprocess(
     mock_list_users.return_value = ["user-1"]
     mock_sources.return_value = [
         {
+            "source_id": "sid-1",
             "url": "https://a.com",
             "use_rss": False,
             "category_id": "cid-1",

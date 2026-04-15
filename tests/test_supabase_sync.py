@@ -35,19 +35,16 @@ def test_parse_article_date_iso_garbage() -> None:
 
 
 def _client_v2_prefetch(news_urls: list[str], excl_urls: list[str]) -> MagicMock:
-    """v2 prefetch: news_articles uses select().eq().eq().execute(); exclusions one .eq()."""
+    """v2 prefetch: news_articles and news_article_exclusions use select().eq().eq().execute()."""
 
     def table(name: str) -> MagicMock:
         t = MagicMock()
         urls = news_urls if name == "news_articles" else excl_urls
         exec_mock = MagicMock()
         exec_mock.execute.return_value = MagicMock(data=[{"url": u} for u in urls])
-        if name == "news_articles":
-            eq_inner = MagicMock()
-            eq_inner.eq.return_value = exec_mock
-            t.select.return_value.eq.return_value = eq_inner
-        else:
-            t.select.return_value.eq.return_value = exec_mock
+        eq_mid = MagicMock()
+        eq_mid.eq.return_value = exec_mock
+        t.select.return_value.eq.return_value = eq_mid
         return t
 
     client = MagicMock()
@@ -203,10 +200,12 @@ def test_upsert_excluded_url_v2() -> None:
     excl_table.upsert.return_value.execute.return_value = MagicMock()
     client = MagicMock()
     client.table.return_value = excl_table
-    assert upsert_excluded_url_v2(client, "https://x.com/a", "c1") is None
+    assert upsert_excluded_url_v2(client, "u1", "c1", "src-1", "https://x.com/a") is None
     row = excl_table.upsert.call_args[0][0][0]
-    assert row["url"] == "https://x.com/a"
+    assert row["user_id"] == "u1"
     assert row["category_id"] == "c1"
+    assert row["source_id"] == "src-1"
+    assert row["url"] == "https://x.com/a"
     assert row["why"] is None
     assert excl_table.upsert.call_args[1]["on_conflict"] == "category_id,url"
 
@@ -217,7 +216,10 @@ def test_upsert_excluded_url_v2_passes_why() -> None:
     client = MagicMock()
     client.table.return_value = excl_table
     assert (
-        upsert_excluded_url_v2(client, "https://x.com/b", "c1", why="Not a match.") is None
+        upsert_excluded_url_v2(
+            client, "u1", "c1", "src-1", "https://x.com/b", why="Not a match."
+        )
+        is None
     )
     assert excl_table.upsert.call_args[0][0][0]["why"] == "Not a match."
 
@@ -262,12 +264,12 @@ def test_delete_excluded_url_v2_matches_normalized_url() -> None:
     sel = MagicMock()
     sel.execute.return_value = MagicMock(data=[{"url": stored}])
     excl = MagicMock()
-    excl.select.return_value.eq.return_value = sel
+    excl.select.return_value.eq.return_value.eq.return_value = sel
 
     dele = MagicMock()
     dele.execute.return_value = MagicMock()
     excl2 = MagicMock()
-    excl2.delete.return_value.eq.return_value.eq.return_value = dele
+    excl2.delete.return_value.eq.return_value.eq.return_value.eq.return_value = dele
 
     client = MagicMock()
     first = True
@@ -281,5 +283,5 @@ def test_delete_excluded_url_v2_matches_normalized_url() -> None:
         return excl2
 
     client.table.side_effect = table
-    assert delete_excluded_url_v2(client, "c1", nu) is None
+    assert delete_excluded_url_v2(client, "u1", "c1", nu) is None
     dele.execute.assert_called_once()

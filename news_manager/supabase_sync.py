@@ -154,7 +154,8 @@ def prefetch_processed_urls_v2(
 ) -> tuple[set[str], set[str]]:
     """
     Return (urls in news_articles, urls in news_article_exclusions) for this user
-    and category_id, keyed by normalize_url(...).
+    and category_id, keyed by normalize_url(...). Exclusions are filtered by
+    ``user_id`` and ``category_id`` (natural key per row remains ``category_id`` + ``url``).
     """
     in_articles: set[str] = set()
     in_exclusions: set[str] = set()
@@ -173,6 +174,7 @@ def prefetch_processed_urls_v2(
         r2 = (
             client.table("news_article_exclusions")
             .select("url")
+            .eq("user_id", user_id)
             .eq("category_id", category_id)
             .execute()
         )
@@ -232,10 +234,25 @@ def upsert_included_article_v2(
 
 
 def upsert_excluded_url_v2(
-    client: Any, url: str, category_id: str, why: str | None = None
+    client: Any,
+    user_id: str,
+    category_id: str,
+    source_id: str,
+    url: str,
+    why: str | None = None,
 ) -> str | None:
-    """Record an excluded URL (v2 PK: category_id, url). Optional ``why`` explains the filter decision."""
-    row: dict[str, Any] = {"category_id": category_id, "url": url, "why": why}
+    """
+    Record an excluded URL (v2 PK: category_id, url).
+    ``user_id`` and ``source_id`` are stored for RLS and lineage.
+    Optional ``why`` explains the filter decision.
+    """
+    row: dict[str, Any] = {
+        "user_id": user_id,
+        "category_id": category_id,
+        "source_id": source_id,
+        "url": url,
+        "why": why,
+    }
     try:
         (
             client.table("news_article_exclusions")
@@ -290,16 +307,18 @@ def delete_included_article_v2(
 
 
 def delete_excluded_url_v2(
-    client: Any, category_id: str, normalized_url: str
+    client: Any, user_id: str, category_id: str, normalized_url: str
 ) -> str | None:
     """
     Delete one ``news_article_exclusions`` row whose stored ``url`` normalizes to
-    ``normalized_url``. Returns None on success or if no matching row; otherwise an error message.
+    ``normalized_url`` for this ``user_id`` and ``category_id``.
+    Returns None on success or if no matching row; otherwise an error message.
     """
     try:
         r = (
             client.table("news_article_exclusions")
             .select("url")
+            .eq("user_id", user_id)
             .eq("category_id", category_id)
             .execute()
         )
@@ -317,6 +336,7 @@ def delete_excluded_url_v2(
         (
             client.table("news_article_exclusions")
             .delete()
+            .eq("user_id", user_id)
             .eq("category_id", category_id)
             .eq("url", url_to_delete)
             .execute()

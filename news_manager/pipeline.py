@@ -117,7 +117,7 @@ def run_pipeline_from_db(
     For each user that has sources, load category names and instructions from Supabase.
     All sources under the same ``category_id`` share that category’s ``instruction`` text
     for the LLM. Prefetch v2 ``news_articles`` / ``news_article_exclusions`` by
-    ``category_id``, then fetch → filter/summarize → upsert (v2). Same normalized URL
+    ``user_id`` and ``category_id``, then fetch → filter/summarize → upsert (v2). Same normalized URL
     once per category.
     """
     from news_manager.config import DEFAULT_CONTENT_MAX_CHARS
@@ -192,6 +192,13 @@ def run_pipeline_from_db(
             )
 
             for row in src_rows:
+                source_id = str(row.get("source_id") or "").strip()
+                if not source_id:
+                    logger.error(
+                        "Skipping source row without source_id for category %s",
+                        category_id,
+                    )
+                    continue
                 ing = IngestSource(
                     url=str(row["url"]),
                     category_id=category_id,
@@ -250,7 +257,7 @@ def run_pipeline_from_db(
                         if nu in db_excluded:
                             if reprocess:
                                 del_err = delete_excluded_url_v2(
-                                    supabase_client, category_id, nu
+                                    supabase_client, user_id, category_id, nu
                                 )
                                 if del_err:
                                     logger.warning("%s", del_err)
@@ -332,7 +339,12 @@ def run_pipeline_from_db(
                             urls_done_this_category.add(nu)
                         elif outcome.outcome == "excluded":
                             err = upsert_excluded_url_v2(
-                                supabase_client, nu, category_id, outcome.exclude_why
+                                supabase_client,
+                                user_id,
+                                category_id,
+                                source_id,
+                                nu,
+                                outcome.exclude_why,
                             )
                             why = outcome.exclude_why or "Excluded by filter"
                             if err:
