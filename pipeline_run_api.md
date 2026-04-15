@@ -98,7 +98,7 @@ On `succeeded`, `result` is a **JSON array** of every article URL the run proces
 | `title` | string or null | May be null for cache-only rows where only the URL is known |
 | `url` | string | |
 | `included` | boolean | `true` if the article was included for this run |
-| `reason` | string or null | `null` when `included` is true; otherwise why it was excluded or skipped |
+| `reason` | string | Why the article was included, excluded, or skipped |
 
 There is **no** `content` field (raw article body is never included).
 
@@ -114,7 +114,7 @@ Example fragment for a succeeded job:
     "title": "Headline",
     "url": "https://example.com/a",
     "included": true,
-    "reason": null
+    "reason": "Matches the category instruction focus."
   },
   {
     "date": null,

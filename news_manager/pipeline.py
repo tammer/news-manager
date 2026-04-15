@@ -76,7 +76,7 @@ def _public_article_decision(
     included: bool,
     reason: str | None,
 ) -> dict[str, Any]:
-    """API-safe article row (no raw body). ``reason`` is null when ``included`` is true."""
+    """API-safe article row (no raw body)."""
     return {
         "date": date,
         "full_summary": full_summary,
@@ -89,7 +89,9 @@ def _public_article_decision(
     }
 
 
-def _public_from_output_article(out: OutputArticle) -> dict[str, Any]:
+def _public_from_output_article(
+    out: OutputArticle, *, reason: str | None = None
+) -> dict[str, Any]:
     return _public_article_decision(
         url=out.url,
         source=out.source,
@@ -98,7 +100,7 @@ def _public_from_output_article(out: OutputArticle) -> dict[str, Any]:
         short_summary=out.short_summary,
         full_summary=out.full_summary,
         included=True,
-        reason=None,
+        reason=reason,
     )
 
 
@@ -236,9 +238,10 @@ def run_pipeline_from_db(
                                 )
                                 if del_err:
                                     logger.warning("%s", del_err)
-                                db_included.discard(nu)
+                                db_included.pop(nu, None)
                             else:
                                 report_already_in_articles(nu)
+                                why = db_included.get(nu) or "Already in database"
                                 article_decisions.append(
                                     _public_article_decision(
                                         url=nu,
@@ -248,7 +251,7 @@ def run_pipeline_from_db(
                                         short_summary=None,
                                         full_summary=None,
                                         included=True,
-                                        reason=None,
+                                        reason=why,
                                     )
                                 )
                                 urls_done_this_category.add(nu)
@@ -261,9 +264,10 @@ def run_pipeline_from_db(
                                 )
                                 if del_err:
                                     logger.warning("%s", del_err)
-                                db_excluded.discard(nu)
+                                db_excluded.pop(nu, None)
                             else:
                                 report_already_excluded(nu)
+                                why = db_excluded.get(nu) or "Already excluded"
                                 article_decisions.append(
                                     _public_article_decision(
                                         url=nu,
@@ -273,7 +277,7 @@ def run_pipeline_from_db(
                                         short_summary=None,
                                         full_summary=None,
                                         included=False,
-                                        reason="Already excluded",
+                                        reason=why,
                                     )
                                 )
                                 urls_done_this_category.add(nu)
@@ -308,11 +312,13 @@ def run_pipeline_from_db(
                         )
 
                         if outcome.outcome == "included" and outcome.output is not None:
+                            include_why = outcome.why or "Included by filter."
                             err = upsert_included_article_v2(
                                 supabase_client,
                                 user_id,
                                 category_id,
                                 outcome.output,
+                                include_why,
                             )
                             if err:
                                 report_processed(nu, category_name, False, err)
@@ -333,20 +339,23 @@ def run_pipeline_from_db(
                                 report_processed(
                                     nu, category_name, True, result="included"
                                 )
+                                db_included[nu] = include_why
                                 article_decisions.append(
-                                    _public_from_output_article(outcome.output)
+                                    _public_from_output_article(
+                                        outcome.output, reason=include_why
+                                    )
                                 )
                             urls_done_this_category.add(nu)
                         elif outcome.outcome == "excluded":
+                            why = outcome.why or "Excluded by filter."
                             err = upsert_excluded_url_v2(
                                 supabase_client,
                                 user_id,
                                 category_id,
                                 source_id,
                                 nu,
-                                outcome.exclude_why,
+                                why,
                             )
-                            why = outcome.exclude_why or "Excluded by filter"
                             if err:
                                 report_processed(nu, category_name, False, err)
                                 article_decisions.append(
@@ -365,7 +374,7 @@ def run_pipeline_from_db(
                                 report_processed(
                                     nu, category_name, True, result="excluded"
                                 )
-                                db_excluded.add(nu)
+                                db_excluded[nu] = why
                                 article_decisions.append(
                                     _public_article_decision(
                                         url=nu,

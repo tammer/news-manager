@@ -35,7 +35,7 @@ def test_run_pipeline_from_db_resolves_instructions_and_upserts_v2(
             "category_instruction": "per category",
         }
     ]
-    mock_prefetch.return_value = (set(), set())
+    mock_prefetch.side_effect = [({}, {}), ({}, {})]
     mock_discover.return_value = [("https://u", None, None)]
     mock_fetch_one.return_value = RawArticle(
         title="T", date=None, content="c", url="https://u"
@@ -51,6 +51,7 @@ def test_run_pipeline_from_db_resolves_instructions_and_upserts_v2(
             source="a.com",
         ),
         outcome="included",
+        why="Matches category focus.",
     )
     mock_upsert_v2.return_value = None
 
@@ -65,7 +66,7 @@ def test_run_pipeline_from_db_resolves_instructions_and_upserts_v2(
     assert len(result.article_decisions) == 1
     d = result.article_decisions[0]
     assert d["included"] is True
-    assert d["reason"] is None
+    assert d["reason"] == "Matches category focus."
     assert d["url"] == "https://u"
     assert d["short_summary"] == "s"
     assert d["full_summary"] == "f"
@@ -85,7 +86,7 @@ def test_run_pipeline_from_db_resolves_instructions_and_upserts_v2(
 @patch("news_manager.pipeline.prefetch_processed_urls_v2")
 @patch("news_manager.pipeline.fetch_sources_with_categories")
 @patch("news_manager.pipeline.list_user_ids_with_sources")
-def test_run_pipeline_from_db_excluded_passes_exclude_why(
+def test_run_pipeline_from_db_excluded_passes_why(
     mock_list_users: MagicMock,
     mock_sources: MagicMock,
     mock_prefetch: MagicMock,
@@ -105,13 +106,13 @@ def test_run_pipeline_from_db_excluded_passes_exclude_why(
             "category_instruction": "",
         }
     ]
-    mock_prefetch.return_value = (set(), set())
+    mock_prefetch.side_effect = [({}, {}), ({}, {})]
     mock_discover.return_value = [("https://u", None, None)]
     mock_fetch_one.return_value = RawArticle(
         title="T", date=None, content="c", url="https://u"
     )
     mock_outcome.return_value = SummarizeOutcome(
-        output=None, outcome="excluded", exclude_why="Wrong topic for this category."
+        output=None, outcome="excluded", why="Wrong topic for this category."
     )
     mock_upsert_excl.return_value = None
 
@@ -170,7 +171,7 @@ def test_run_pipeline_from_db_category_selector_matches_name_or_id(
             "category_instruction": "other instruction",
         },
     ]
-    mock_prefetch.return_value = (set(), set())
+    mock_prefetch.side_effect = [({}, {}), ({}, {})]
     mock_discover.return_value = [("https://u", None, None)]
     mock_fetch_one.return_value = RawArticle(
         title="T", date=None, content="c", url="https://u"
@@ -186,6 +187,7 @@ def test_run_pipeline_from_db_category_selector_matches_name_or_id(
             source="a.com",
         ),
         outcome="included",
+        why="Matches category focus.",
     )
     mock_upsert_v2.return_value = None
 
@@ -253,7 +255,7 @@ def test_run_pipeline_from_db_source_selector_matches_name_or_id(
             "category_instruction": "per category",
         },
     ]
-    mock_prefetch.return_value = (set(), set())
+    mock_prefetch.side_effect = [({}, {}), ({}, {})]
     mock_discover.return_value = [("https://u", None, None)]
     mock_fetch_one.return_value = RawArticle(
         title="T", date=None, content="c", url="https://u"
@@ -269,6 +271,7 @@ def test_run_pipeline_from_db_source_selector_matches_name_or_id(
             source="a.com",
         ),
         outcome="included",
+        why="Matches category focus.",
     )
     mock_upsert_v2.return_value = None
 
@@ -324,7 +327,7 @@ def test_run_pipeline_reprocess_included_deletes_and_runs_llm(
             "category_instruction": "per category",
         }
     ]
-    mock_prefetch.return_value = ({nu}, set())
+    mock_prefetch.return_value = ({nu: "Already included previously."}, {})
     mock_discover.return_value = [("https://u", None, None)]
     mock_fetch_one.return_value = RawArticle(
         title="T", date=None, content="c", url="https://u"
@@ -340,6 +343,7 @@ def test_run_pipeline_reprocess_included_deletes_and_runs_llm(
             source="a.com",
         ),
         outcome="included",
+        why="Matches category focus.",
     )
     mock_upsert_v2.return_value = None
     mock_delete_inc.return_value = None
@@ -383,7 +387,7 @@ def test_run_pipeline_reprocess_excluded_deletes_and_runs_llm(
             "category_instruction": "",
         }
     ]
-    mock_prefetch.return_value = (set(), {nu})
+    mock_prefetch.return_value = ({}, {nu: "Out of scope previously."})
     mock_discover.return_value = [("https://u", None, None)]
     mock_fetch_one.return_value = RawArticle(
         title="T", date=None, content="c", url="https://u"
@@ -399,6 +403,7 @@ def test_run_pipeline_reprocess_excluded_deletes_and_runs_llm(
             source="a.com",
         ),
         outcome="included",
+        why="Matches category focus.",
     )
     mock_upsert_v2.return_value = None
     mock_delete_exc.return_value = None
@@ -437,10 +442,52 @@ def test_run_pipeline_cached_included_skips_without_reprocess(
             "category_instruction": "",
         }
     ]
-    mock_prefetch.return_value = ({nu}, set())
+    mock_prefetch.return_value = ({nu: "Matches existing include criteria."}, {})
     mock_discover.return_value = [("https://u", None, None)]
 
     sb = MagicMock()
-    run_pipeline_from_db(supabase_client=sb, max_articles=5, http_timeout=1.0)
+    result = run_pipeline_from_db(supabase_client=sb, max_articles=5, http_timeout=1.0)
     mock_outcome.assert_not_called()
     mock_fetch_one.assert_not_called()
+    assert len(result.article_decisions) == 1
+    assert result.article_decisions[0]["included"] is True
+    assert result.article_decisions[0]["reason"] == "Matches existing include criteria."
+
+
+@patch("news_manager.pipeline.filter_and_summarize_outcome")
+@patch("news_manager.pipeline.fetch_single_raw_article")
+@patch("news_manager.pipeline.discover_article_targets")
+@patch("news_manager.pipeline.prefetch_processed_urls_v2")
+@patch("news_manager.pipeline.fetch_sources_with_categories")
+@patch("news_manager.pipeline.list_user_ids_with_sources")
+def test_run_pipeline_cached_excluded_uses_stored_why(
+    mock_list_users: MagicMock,
+    mock_sources: MagicMock,
+    mock_prefetch: MagicMock,
+    mock_discover: MagicMock,
+    mock_fetch_one: MagicMock,
+    mock_outcome: MagicMock,
+) -> None:
+    nu = normalize_url("https://u")
+    why = "Does not match local coverage focus."
+    mock_list_users.return_value = ["user-1"]
+    mock_sources.return_value = [
+        {
+            "source_id": "sid-1",
+            "url": "https://a.com",
+            "use_rss": False,
+            "category_id": "cid-1",
+            "category_name": "News",
+            "category_instruction": "",
+        }
+    ]
+    mock_prefetch.return_value = ({}, {nu: why})
+    mock_discover.return_value = [("https://u", None, None)]
+
+    sb = MagicMock()
+    result = run_pipeline_from_db(supabase_client=sb, max_articles=5, http_timeout=1.0)
+    mock_outcome.assert_not_called()
+    mock_fetch_one.assert_not_called()
+    assert len(result.article_decisions) == 1
+    assert result.article_decisions[0]["included"] is False
+    assert result.article_decisions[0]["reason"] == why

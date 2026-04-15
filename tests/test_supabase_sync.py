@@ -34,14 +34,16 @@ def test_parse_article_date_iso_garbage() -> None:
     assert parse_article_date_iso("not a date") is None
 
 
-def _client_v2_prefetch(news_urls: list[str], excl_urls: list[str]) -> MagicMock:
+def _client_v2_prefetch(
+    news_rows: list[dict[str, str | None]], excl_rows: list[dict[str, str | None]]
+) -> MagicMock:
     """v2 prefetch: news_articles and news_article_exclusions use select().eq().eq().execute()."""
 
     def table(name: str) -> MagicMock:
         t = MagicMock()
-        urls = news_urls if name == "news_articles" else excl_urls
+        rows = news_rows if name == "news_articles" else excl_rows
         exec_mock = MagicMock()
-        exec_mock.execute.return_value = MagicMock(data=[{"url": u} for u in urls])
+        exec_mock.execute.return_value = MagicMock(data=rows)
         eq_mid = MagicMock()
         eq_mid.eq.return_value = exec_mock
         t.select.return_value.eq.return_value = eq_mid
@@ -54,12 +56,12 @@ def _client_v2_prefetch(news_urls: list[str], excl_urls: list[str]) -> MagicMock
 
 def test_prefetch_processed_urls_v2() -> None:
     client = _client_v2_prefetch(
-        news_urls=["https://one.example/p"],
-        excl_urls=["https://two.example/q"],
+        news_rows=[{"url": "https://one.example/p", "why": "Matches category scope."}],
+        excl_rows=[{"url": "https://two.example/q", "why": "Wrong region."}],
     )
     inc, exc = prefetch_processed_urls_v2(client, "user-1", "cat-uuid")
-    assert "https://one.example/p" in inc
-    assert "https://two.example/q" in exc
+    assert inc["https://one.example/p"] == "Matches category scope."
+    assert exc["https://two.example/q"] == "Wrong region."
 
 
 def test_output_article_to_upsert_row_v2() -> None:
@@ -77,6 +79,7 @@ def test_output_article_to_upsert_row_v2() -> None:
     assert row["category_id"] == "c1"
     assert row["headline"] == "T"
     assert row["article_date"] == "2024-03-20T00:00:00+00:00"
+    assert row["why"] is None
 
 
 def test_list_user_ids_with_sources() -> None:
@@ -191,8 +194,36 @@ def test_upsert_included_article_v2_on_conflict() -> None:
         source="src",
     )
     assert upsert_included_article_v2(client, "u1", "c1", art) is None
+    row = news_table.upsert.call_args[0][0][0]
+    assert row["why"] is None
     kwargs = news_table.upsert.call_args[1]
     assert kwargs["on_conflict"] == "user_id,category_id,url"
+
+
+def test_upsert_included_article_v2_passes_why() -> None:
+    news_table = MagicMock()
+    up = MagicMock()
+    up.execute.return_value = MagicMock()
+    news_table.upsert.return_value = up
+    client = MagicMock()
+    client.table.return_value = news_table
+    art = OutputArticle(
+        title="T",
+        date=None,
+        content="c",
+        url="https://ex.com/z",
+        short_summary="s",
+        full_summary="f",
+        source="src",
+    )
+    assert (
+        upsert_included_article_v2(
+            client, "u1", "c1", art, why="Matches all category instructions."
+        )
+        is None
+    )
+    row = news_table.upsert.call_args[0][0][0]
+    assert row["why"] == "Matches all category instructions."
 
 
 def test_upsert_excluded_url_v2() -> None:

@@ -149,20 +149,28 @@ def fetch_sources_with_categories(client: Any, user_id: str) -> list[dict[str, A
     return out
 
 
+def _clean_optional_text(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    cleaned = " ".join(value.split()).strip()
+    return cleaned or None
+
+
 def prefetch_processed_urls_v2(
     client: Any, user_id: str, category_id: str
-) -> tuple[set[str], set[str]]:
+) -> tuple[dict[str, str | None], dict[str, str | None]]:
     """
-    Return (urls in news_articles, urls in news_article_exclusions) for this user
-    and category_id, keyed by normalize_url(...). Exclusions are filtered by
-    ``user_id`` and ``category_id`` (natural key per row remains ``category_id`` + ``url``).
+    Return ({normalized_url: why} in news_articles,
+    {normalized_url: why} in news_article_exclusions) for this user and category_id.
+    Exclusions are filtered by ``user_id`` and ``category_id`` (natural key remains
+    ``category_id`` + ``url``).
     """
-    in_articles: set[str] = set()
-    in_exclusions: set[str] = set()
+    in_articles: dict[str, str | None] = {}
+    in_exclusions: dict[str, str | None] = {}
     try:
         r1 = (
             client.table("news_articles")
-            .select("url")
+            .select("url, why")
             .eq("user_id", user_id)
             .eq("category_id", category_id)
             .execute()
@@ -170,10 +178,10 @@ def prefetch_processed_urls_v2(
         for row in r1.data or []:
             u = row.get("url")
             if isinstance(u, str) and u.strip():
-                in_articles.add(normalize_url(u))
+                in_articles[normalize_url(u)] = _clean_optional_text(row.get("why"))
         r2 = (
             client.table("news_article_exclusions")
-            .select("url")
+            .select("url, why")
             .eq("user_id", user_id)
             .eq("category_id", category_id)
             .execute()
@@ -181,7 +189,7 @@ def prefetch_processed_urls_v2(
         for row in r2.data or []:
             u = row.get("url")
             if isinstance(u, str) and u.strip():
-                in_exclusions.add(normalize_url(u))
+                in_exclusions[normalize_url(u)] = _clean_optional_text(row.get("why"))
     except Exception as e:
         raise RuntimeError(
             f"Supabase prefetch v2 failed for user_id={user_id!r} category_id={category_id!r}: {e}"
@@ -190,7 +198,7 @@ def prefetch_processed_urls_v2(
 
 
 def output_article_to_upsert_row_v2(
-    user_id: str, category_id: str, article: OutputArticle
+    user_id: str, category_id: str, article: OutputArticle, why: str | None = None
 ) -> dict[str, Any]:
     """Row dict for v2 news_articles upsert (content fields; omit read/saved)."""
     title = article.title.strip()
@@ -203,6 +211,7 @@ def output_article_to_upsert_row_v2(
         "source": article.source,
         "short_summary": article.short_summary,
         "full_summary": article.full_summary,
+        "why": why,
     }
     ad = parse_article_date_iso(article.date)
     if ad is not None:
@@ -215,9 +224,10 @@ def upsert_included_article_v2(
     user_id: str,
     category_id: str,
     article: OutputArticle,
+    why: str | None = None,
 ) -> str | None:
     """Upsert v2 news_articles. Returns None on success, or an error message string."""
-    row = output_article_to_upsert_row_v2(user_id, category_id, article)
+    row = output_article_to_upsert_row_v2(user_id, category_id, article, why=why)
     try:
         (
             client.table("news_articles")

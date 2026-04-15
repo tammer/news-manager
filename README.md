@@ -58,7 +58,7 @@ news-manager --from-db --category 9f9f8... --source "The Star"
 news-manager --from-db --source 2c7d6...
 ```
 
-Apply SQL in order: schema in [`20260411.md`](20260411.md), then [`sql/news_articles_v2_unique_user_category_url.sql`](sql/news_articles_v2_unique_user_category_url.sql), then [`sql/news_article_exclusions_v2.sql`](sql/news_article_exclusions_v2.sql), then [`sql/news_article_exclusions_add_user_id_source_id.sql`](sql/news_article_exclusions_add_user_id_source_id.sql). Ingest uses **`user_id`**, **`category_id`**, and upsert key **`(user_id, category_id, url)`** on **`news_articles`**, and **`(category_id, url)`** on exclusions (with **`user_id`** and **`source_id`** stored for RLS and lineage).
+Apply SQL in order: schema in [`20260411.md`](20260411.md), then [`sql/news_articles_v2_unique_user_category_url.sql`](sql/news_articles_v2_unique_user_category_url.sql), then [`sql/news_articles_add_why.sql`](sql/news_articles_add_why.sql), then [`sql/news_article_exclusions_v2.sql`](sql/news_article_exclusions_v2.sql), then [`sql/news_article_exclusions_add_user_id_source_id.sql`](sql/news_article_exclusions_add_user_id_source_id.sql). Ingest uses **`user_id`**, **`category_id`**, and upsert key **`(user_id, category_id, url)`** on **`news_articles`**, and **`(category_id, url)`** on exclusions (with **`user_id`** and **`source_id`** stored for RLS and lineage).
 
 Filtering/summarization instructions for **`--from-db`** come from **`public.categories.instruction`** (one text per category). All sources sharing that **`category_id`** use the same instruction (see [`new_instructions_plan.md`](new_instructions_plan.md) for the schema migration).
 

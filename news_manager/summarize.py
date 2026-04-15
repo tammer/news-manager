@@ -22,7 +22,7 @@ class SummarizeOutcome:
 
     output: OutputArticle | None
     outcome: Literal["included", "excluded", "error"]
-    exclude_why: str | None = None
+    why: str | None = None
 
 _JSON_FENCE = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
 
@@ -55,6 +55,13 @@ def _truncate(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     return text[: max_chars - 3] + "..."
+
+
+def _normalize_why(why_raw: Any, *, fallback: str) -> str:
+    if not isinstance(why_raw, str):
+        why_raw = str(why_raw) if why_raw is not None else ""
+    why_one = " ".join(why_raw.split()).strip()
+    return why_one or fallback
 
 
 def _parse_json_response(content: str) -> dict[str, Any] | None:
@@ -159,7 +166,11 @@ Respond with JSON only, using this exact shape:
         full_summary=full_s.strip(),
         source=source,
     )
-    return SummarizeOutcome(output=out, outcome="included")
+    return SummarizeOutcome(
+        output=out,
+        outcome="included",
+        why="Included because filtering is disabled for this source.",
+    )
 
 
 def filter_and_summarize_outcome(
@@ -218,10 +229,11 @@ Respond with JSON only, using this exact shape:
   "include": <true or false>,
   "short_summary": "<about 25 words if include is true, else empty string>",
   "full_summary": "<about 200 words if include is true, else empty string>",
-  "why": "<if include is false: very concise reason why this article was filtered out; if include is true: empty string>"
+  "why": "<very concise reason for the decision. If include is false: why filtered out. If include is true: why it matches the instructions>"
 }}
 
-If the article does not match what the user wants for this category, set include to false and fill "why" with one clear sentence tied to the instructions and article content.
+Always provide a non-empty "why" with one clear sentence tied to the instructions and article content.
+If the article does not match what the user wants for this category, set include to false.
 The "full_summary" should summarize the article and make no reference to the user's instructions.
 """
 
@@ -255,12 +267,9 @@ The "full_summary" should summarize the article and make no reference to the use
 
     include = data.get("include")
     if include is not True:
-        why_raw = data.get("why", "")
-        if not isinstance(why_raw, str):
-            why_raw = str(why_raw) if why_raw is not None else ""
-        why_one = " ".join(why_raw.split()).strip() or None
+        why_one = _normalize_why(data.get("why"), fallback="Excluded by filter.")
         _maybe_emit_stderr(emit_stderr, title, "excluded")
-        return SummarizeOutcome(output=None, outcome="excluded", exclude_why=why_one)
+        return SummarizeOutcome(output=None, outcome="excluded", why=why_one)
 
     short_s = data.get("short_summary", "")
     full_s = data.get("full_summary", "")
@@ -279,7 +288,8 @@ The "full_summary" should summarize the article and make no reference to the use
         full_summary=full_s.strip(),
         source=source,
     )
-    return SummarizeOutcome(output=out, outcome="included")
+    why_one = _normalize_why(data.get("why"), fallback="Included by filter.")
+    return SummarizeOutcome(output=out, outcome="included", why=why_one)
 
 
 def filter_and_summarize(
