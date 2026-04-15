@@ -30,6 +30,11 @@ from news_manager.supabase_sync import create_supabase_client
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_CORS_ORIGINS = (
+    "http://localhost:5173",
+    "https://gistprism.tammer.com",
+)
+
 
 def _normalize_origin(value: str | None) -> str | None:
     if not value:
@@ -38,9 +43,11 @@ def _normalize_origin(value: str | None) -> str | None:
 
 
 def _allowed_cors_origins() -> frozenset[str]:
-    raw = os.environ.get("RESOLVE_CORS_ORIGIN", "http://localhost:5173").strip()
-    parts = [p.strip() for p in raw.split(",") if p.strip()]
-    return frozenset(_normalize_origin(p) for p in parts)
+    raw = os.environ.get("RESOLVE_CORS_ORIGIN", "").strip()
+    parts = list(DEFAULT_CORS_ORIGINS)
+    parts.extend(p.strip() for p in raw.split(",") if p.strip())
+    normalized = (_normalize_origin(p) for p in parts)
+    return frozenset(p for p in normalized if p)
 
 
 def _auth_required_response() -> tuple[object, int]:

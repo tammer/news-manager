@@ -276,6 +276,33 @@ def test_flask_resolve_401_without_token(jwt_secret: str) -> None:
     assert r.status_code == 401
 
 
+def test_cors_allows_gistprism_origin_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("RESOLVE_CORS_ORIGIN", raising=False)
+    app = create_app()
+    app.testing = True
+    c = app.test_client()
+    r = c.options(
+        "/api/sources/resolve",
+        headers={"Origin": "https://gistprism.tammer.com"},
+    )
+    assert r.status_code == 204
+    assert r.headers.get("Access-Control-Allow-Origin") == "https://gistprism.tammer.com"
+    assert r.headers.get("Access-Control-Allow-Methods") == "POST, GET, OPTIONS"
+
+
+def test_cors_keeps_default_origins_when_custom_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RESOLVE_CORS_ORIGIN", "https://custom.example.com")
+    app = create_app()
+    app.testing = True
+    c = app.test_client()
+    r = c.options(
+        "/api/sources/resolve",
+        headers={"Origin": "https://gistprism.tammer.com"},
+    )
+    assert r.status_code == 204
+    assert r.headers.get("Access-Control-Allow-Origin") == "https://gistprism.tammer.com"
+
+
 def test_flask_resolve_401_bad_token(jwt_secret: str) -> None:
     os.environ["SUPABASE_JWT_SECRET"] = jwt_secret
     app = create_app()
