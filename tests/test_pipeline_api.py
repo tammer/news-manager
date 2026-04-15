@@ -147,6 +147,185 @@ def test_pipeline_run_status_success(
     assert payload["status"] == "succeeded"
 
 
+def test_pipeline_evaluate_article_401_without_token(jwt_secret: str) -> None:
+    os.environ["SUPABASE_JWT_SECRET"] = jwt_secret
+    c = _new_client()
+    r = c.post("/api/pipeline/evaluate-article", json={})
+    assert r.status_code == 401
+
+
+def test_pipeline_evaluate_article_400_requires_selector(jwt_secret: str) -> None:
+    c = _new_client()
+    headers = _authed_headers(jwt_secret, sub="user-123")
+    r = c.post(
+        "/api/pipeline/evaluate-article",
+        json={"category_id": "cid-1"},
+        headers=headers,
+    )
+    assert r.status_code == 400
+    payload = r.get_json()
+    assert payload["ok"] is False
+
+
+def test_pipeline_evaluate_article_400_rejects_both_selectors(jwt_secret: str) -> None:
+    c = _new_client()
+    headers = _authed_headers(jwt_secret, sub="user-123")
+    r = c.post(
+        "/api/pipeline/evaluate-article",
+        json={
+            "category_id": "cid-1",
+            "url": "https://example.com/a",
+            "article_id": "article-1",
+        },
+        headers=headers,
+    )
+    assert r.status_code == 400
+    payload = r.get_json()
+    assert "exactly one" in payload["message"]
+
+
+def test_pipeline_evaluate_article_400_invalid_persist_type(jwt_secret: str) -> None:
+    c = _new_client()
+    headers = _authed_headers(jwt_secret, sub="user-123")
+    r = c.post(
+        "/api/pipeline/evaluate-article",
+        json={"category_id": "cid-1", "url": "https://example.com/a", "persist": "yes"},
+        headers=headers,
+    )
+    assert r.status_code == 400
+    payload = r.get_json()
+    assert "'persist' must be a boolean." in payload["message"]
+
+
+@patch("news_manager.resolve_app.create_supabase_client")
+@patch("news_manager.resolve_app.evaluate_single_article_from_db")
+def test_pipeline_evaluate_article_success_dry_run(
+    mock_eval: Any, mock_client_factory: Any, jwt_secret: str
+) -> None:
+    mock_client_factory.return_value = object()
+    mock_eval.return_value = {
+        "included": False,
+        "reason": "Out of scope.",
+        "url": "https://example.com/a",
+        "title": "Title",
+        "date": "2026-04-15",
+        "source": "example.com",
+        "short_summary": None,
+        "full_summary": None,
+        "persisted": False,
+        "instruction_source": "override",
+        "persist_error": None,
+    }
+    c = _new_client()
+    headers = _authed_headers(jwt_secret, sub="user-123")
+    r = c.post(
+        "/api/pipeline/evaluate-article",
+        json={
+            "category_id": "cid-1",
+            "url": "https://example.com/a",
+            "instructions_override": "new instruction",
+        },
+        headers=headers,
+    )
+    assert r.status_code == 200
+    payload = r.get_json()
+    assert payload["ok"] is True
+    assert payload["included"] is False
+    assert payload["why"] == "Out of scope."
+    assert payload["persisted"] is False
+    kwargs = mock_eval.call_args.kwargs
+    assert kwargs["user_id"] == "user-123"
+    assert kwargs["persist"] is False
+    assert kwargs["category_id"] == "cid-1"
+    assert kwargs["url"] == "https://example.com/a"
+
+
+@patch("news_manager.resolve_app.create_supabase_client")
+@patch("news_manager.resolve_app.evaluate_single_article_from_db")
+def test_pipeline_evaluate_article_success_with_article_id_selector(
+    mock_eval: Any, mock_client_factory: Any, jwt_secret: str
+) -> None:
+    mock_client_factory.return_value = object()
+    mock_eval.return_value = {
+        "included": True,
+        "reason": "Matches category.",
+        "url": "https://example.com/a",
+        "title": "Title",
+        "date": None,
+        "source": "example.com",
+        "short_summary": "short",
+        "full_summary": "full",
+        "persisted": False,
+        "instruction_source": "category",
+        "persist_error": None,
+    }
+    c = _new_client()
+    headers = _authed_headers(jwt_secret, sub="user-123")
+    r = c.post(
+        "/api/pipeline/evaluate-article",
+        json={"category_id": "cid-1", "article_id": "article-1"},
+        headers=headers,
+    )
+    assert r.status_code == 200
+    kwargs = mock_eval.call_args.kwargs
+    assert kwargs["article_id"] == "article-1"
+    assert kwargs["url"] is None
+
+
+@patch("news_manager.resolve_app.create_supabase_client")
+@patch("news_manager.resolve_app.evaluate_single_article_from_db")
+def test_pipeline_evaluate_article_success_persist_true(
+    mock_eval: Any, mock_client_factory: Any, jwt_secret: str
+) -> None:
+    mock_client_factory.return_value = object()
+    mock_eval.return_value = {
+        "included": True,
+        "reason": "Matches the category.",
+        "url": "https://example.com/a",
+        "title": "Title",
+        "date": "2026-04-15",
+        "source": "example.com",
+        "short_summary": "short",
+        "full_summary": "full",
+        "persisted": True,
+        "instruction_source": "category",
+        "persist_error": None,
+    }
+    c = _new_client()
+    headers = _authed_headers(jwt_secret, sub="user-123")
+    r = c.post(
+        "/api/pipeline/evaluate-article",
+        json={"category_id": "cid-1", "url": "https://example.com/a", "persist": True},
+        headers=headers,
+    )
+    assert r.status_code == 200
+    payload = r.get_json()
+    assert payload["persisted"] is True
+    assert payload["included"] is True
+    assert payload["short_summary"] == "short"
+    kwargs = mock_eval.call_args.kwargs
+    assert kwargs["persist"] is True
+
+
+@patch("news_manager.resolve_app.create_supabase_client")
+@patch("news_manager.resolve_app.evaluate_single_article_from_db")
+def test_pipeline_evaluate_article_404_for_lookup_errors(
+    mock_eval: Any, mock_client_factory: Any, jwt_secret: str
+) -> None:
+    mock_client_factory.return_value = object()
+    mock_eval.side_effect = LookupError("Category not found for this user.")
+    c = _new_client()
+    headers = _authed_headers(jwt_secret, sub="user-123")
+    r = c.post(
+        "/api/pipeline/evaluate-article",
+        json={"category_id": "cid-1", "article_id": "article-1"},
+        headers=headers,
+    )
+    assert r.status_code == 404
+    payload = r.get_json()
+    assert payload["error"] == "not_found"
+
+
 def test_pipeline_jobs_async_lifecycle_success() -> None:
     params = PipelineRunParams(
         user_id="user-123",

@@ -15,6 +15,7 @@ from news_manager.fetch import (
     discover_article_targets,
     fetch_single_raw_article,
     normalize_url,
+    same_site,
     source_base_label,
 )
 from news_manager.models import (
@@ -32,6 +33,9 @@ from news_manager.run_report import (
 from news_manager.supabase_sync import (
     delete_excluded_url_v2,
     delete_included_article_v2,
+    fetch_category_for_user,
+    fetch_included_article_for_user,
+    fetch_sources_for_category_user,
     fetch_sources_with_categories,
     list_user_ids_with_sources,
     prefetch_processed_urls_v2,
@@ -102,6 +106,191 @@ def _public_from_output_article(
         included=True,
         reason=reason,
     )
+
+
+def evaluate_single_article_from_db(
+    *,
+    supabase_client: Any,
+    user_id: str,
+    category_id: str,
+    url: str | None = None,
+    article_id: str | None = None,
+    instructions_override: str | None = None,
+    persist: bool = False,
+    http_timeout: float = DEFAULT_HTTP_TIMEOUT,
+    content_max_chars: int | None = None,
+) -> dict[str, Any]:
+    """
+    Evaluate one article against category instructions with optional persistence.
+
+    Returns API-safe decision payload with include/exclude reason and summaries.
+    """
+    from news_manager.config import DEFAULT_CONTENT_MAX_CHARS
+
+    url_value = url.strip() if isinstance(url, str) else ""
+    article_id_value = article_id.strip() if isinstance(article_id, str) else ""
+    if bool(url_value) == bool(article_id_value):
+        raise ValueError("Provide exactly one of 'url' or 'article_id'.")
+
+    article_url = url_value
+    if article_id_value:
+        row = fetch_included_article_for_user(
+            supabase_client, user_id=user_id, article_id=article_id_value
+        )
+        if row is None:
+            raise LookupError("Article not found for this user.")
+        row_category_id = row["category_id"]
+        if row_category_id != category_id:
+            raise ValueError(
+                "Provided category_id does not match the article's category."
+            )
+        article_url = row["url"]
+
+    normalized_url = normalize_url(article_url)
+    category = fetch_category_for_user(
+        supabase_client, user_id=user_id, category_id=category_id
+    )
+    if category is None:
+        raise LookupError("Category not found for this user.")
+
+    sources = fetch_sources_for_category_user(
+        supabase_client, user_id=user_id, category_id=category_id
+    )
+    selected_source = sources[0] if sources else None
+    for source in sources:
+        try:
+            if same_site(source["url"], normalized_url):
+                selected_source = source
+                break
+        except ValueError:
+            continue
+
+    source_url = selected_source["url"] if selected_source is not None else normalized_url
+    source_label = source_base_label(source_url)
+    apply_filter = True
+
+    cm = content_max_chars if content_max_chars is not None else DEFAULT_CONTENT_MAX_CHARS
+    limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
+    client_kw: dict[str, Any] = {
+        "headers": {"User-Agent": USER_AGENT},
+        "timeout": http_timeout,
+        "limits": limits,
+    }
+    if selected_source is not None:
+        ing = IngestSource(
+            url=source_url,
+            category_id=category_id,
+            category_name=category["category_name"],
+            use_rss=bool(selected_source.get("use_rss", False)),
+        )
+        src = ing.to_fetch_source()
+        jar = cookie_jar_for_source(src)
+        if jar is not None:
+            client_kw["cookies"] = jar
+
+    with httpx.Client(**client_kw) as client:
+        raw = fetch_single_raw_article(client, normalized_url, None, None)
+    if raw is None:
+        return {
+            "included": False,
+            "reason": "Could not fetch article.",
+            "url": normalized_url,
+            "title": None,
+            "date": None,
+            "source": source_label,
+            "short_summary": None,
+            "full_summary": None,
+            "persisted": False,
+            "instruction_source": (
+                "override"
+                if isinstance(instructions_override, str) and instructions_override.strip()
+                else "category"
+            ),
+        }
+
+    instructions = (
+        instructions_override.strip()
+        if isinstance(instructions_override, str) and instructions_override.strip()
+        else category["category_instruction"]
+    )
+    instruction_source = "override" if instructions_override and instructions_override.strip() else "category"
+    outcome = filter_and_summarize_outcome(
+        raw,
+        category=category["category_name"],
+        instructions=instructions,
+        content_max_chars=cm,
+        apply_filter=apply_filter,
+        source=source_label,
+        emit_stderr=False,
+    )
+
+    persisted = False
+    persist_error: str | None = None
+    if outcome.outcome == "included" and outcome.output is not None:
+        include_why = outcome.why or "Included by filter."
+        if persist:
+            persist_error = upsert_included_article_v2(
+                supabase_client,
+                user_id,
+                category_id,
+                outcome.output,
+                include_why,
+            )
+            persisted = persist_error is None
+        payload = _public_from_output_article(outcome.output, reason=include_why)
+        payload["persisted"] = persisted
+        payload["instruction_source"] = instruction_source
+        payload["persist_error"] = persist_error
+        return payload
+
+    if outcome.outcome == "excluded":
+        why = outcome.why or "Excluded by filter."
+        if persist:
+            source_id = (
+                selected_source["source_id"].strip()
+                if selected_source is not None
+                and isinstance(selected_source.get("source_id"), str)
+                else ""
+            )
+            if not source_id:
+                persist_error = "Could not persist exclusion: no source found for category."
+            else:
+                persist_error = upsert_excluded_url_v2(
+                    supabase_client,
+                    user_id,
+                    category_id,
+                    source_id,
+                    normalized_url,
+                    why,
+                )
+            persisted = persist_error is None
+        return {
+            "included": False,
+            "reason": why,
+            "url": normalized_url,
+            "title": raw.title,
+            "date": raw.date,
+            "source": source_label,
+            "short_summary": None,
+            "full_summary": None,
+            "persisted": persisted,
+            "instruction_source": instruction_source,
+            "persist_error": persist_error,
+        }
+
+    return {
+        "included": False,
+        "reason": "LLM or parse error",
+        "url": normalized_url,
+        "title": raw.title,
+        "date": raw.date,
+        "source": source_label,
+        "short_summary": None,
+        "full_summary": None,
+        "persisted": False,
+        "instruction_source": instruction_source,
+        "persist_error": None,
+    }
 
 
 def run_pipeline_from_db(

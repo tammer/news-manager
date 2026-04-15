@@ -18,6 +18,7 @@ from news_manager.config import (
     groq_api_key,
     load_dotenv_if_present,
 )
+from news_manager.pipeline import evaluate_single_article_from_db
 from news_manager.pipeline_jobs import (
     PipelineRunParams,
     get_pipeline_job,
@@ -25,6 +26,7 @@ from news_manager.pipeline_jobs import (
     start_pipeline_job,
 )
 from news_manager.source_resolve import resolve_source_json_body
+from news_manager.supabase_sync import create_supabase_client
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +156,58 @@ def _parse_pipeline_run_request(
     )
 
 
+def _parse_evaluate_article_request(
+    *,
+    body: dict[str, Any],
+) -> tuple[dict[str, Any] | None, tuple[object, int] | None]:
+    category_id, category_err = _optional_str_field(body, "category_id")
+    if category_err is not None:
+        return None, category_err
+    if category_id is None:
+        return None, _json_error("'category_id' is required.", status=400)
+
+    url, url_err = _optional_str_field(body, "url")
+    if url_err is not None:
+        return None, url_err
+    article_id, article_err = _optional_str_field(body, "article_id")
+    if article_err is not None:
+        return None, article_err
+
+    if bool(url) == bool(article_id):
+        return None, _json_error("Provide exactly one of 'url' or 'article_id'.", status=400)
+
+    instructions_override, instructions_err = _optional_str_field(
+        body, "instructions_override"
+    )
+    if instructions_err is not None:
+        return None, instructions_err
+
+    persist = body.get("persist", False)
+    if not isinstance(persist, bool):
+        return None, _json_error("'persist' must be a boolean.", status=400)
+
+    content_max_chars = body.get("content_max_chars", DEFAULT_CONTENT_MAX_CHARS)
+    if not isinstance(content_max_chars, int):
+        return None, _json_error("'content_max_chars' must be an integer.", status=400)
+
+    timeout = body.get("timeout", DEFAULT_HTTP_TIMEOUT)
+    if not isinstance(timeout, (int, float)):
+        return None, _json_error("'timeout' must be a number.", status=400)
+
+    return (
+        {
+            "category_id": category_id,
+            "url": url,
+            "article_id": article_id,
+            "instructions_override": instructions_override,
+            "persist": persist,
+            "content_max_chars": content_max_chars,
+            "timeout": float(timeout),
+        },
+        None,
+    )
+
+
 def create_app() -> Flask:
     app = Flask(__name__)
     allowed_origins = _allowed_cors_origins()
@@ -249,6 +303,68 @@ def create_app() -> Flask:
         payload = get_pipeline_job(job_id)
         if payload is None:
             return _json_error("Pipeline job not found.", status=404, error="not_found")
+        return jsonify(payload), 200
+
+    @app.route("/api/pipeline/evaluate-article", methods=["OPTIONS"])
+    def pipeline_evaluate_article_preflight() -> tuple[str, int]:
+        return "", 204
+
+    @app.post("/api/pipeline/evaluate-article")
+    def pipeline_evaluate_article() -> tuple[object, int]:
+        claims, auth_err = _require_auth_claims()
+        if auth_err is not None:
+            return auth_err
+        assert claims is not None
+        auth_user_id, sub_err = _required_sub(claims)
+        if sub_err is not None:
+            return sub_err
+        assert auth_user_id is not None
+
+        body = request.get_json(silent=True)
+        if body is None or not isinstance(body, dict):
+            return _json_error("Body must be a JSON object.", status=400)
+
+        parsed, parse_err = _parse_evaluate_article_request(body=body)
+        if parse_err is not None:
+            return parse_err
+        assert parsed is not None
+
+        supabase_client = create_supabase_client()
+        try:
+            decision = evaluate_single_article_from_db(
+                supabase_client=supabase_client,
+                user_id=auth_user_id,
+                category_id=parsed["category_id"],
+                url=parsed["url"],
+                article_id=parsed["article_id"],
+                instructions_override=parsed["instructions_override"],
+                persist=parsed["persist"],
+                http_timeout=parsed["timeout"],
+                content_max_chars=parsed["content_max_chars"],
+            )
+        except ValueError as e:
+            return _json_error(str(e), status=400)
+        except LookupError as e:
+            return _json_error(str(e), status=404, error="not_found")
+        except RuntimeError as e:
+            return _json_error(str(e), status=500)
+
+        payload = {
+            "ok": True,
+            "included": decision["included"],
+            "why": decision["reason"],
+            "url": decision["url"],
+            "title": decision["title"],
+            "date": decision["date"],
+            "source": decision["source"],
+            "short_summary": decision["short_summary"],
+            "full_summary": decision["full_summary"],
+            "persisted": decision["persisted"],
+            "instruction_source": decision["instruction_source"],
+        }
+        persist_error = decision.get("persist_error")
+        if isinstance(persist_error, str) and persist_error.strip():
+            payload["persist_error"] = persist_error
         return jsonify(payload), 200
 
     return app

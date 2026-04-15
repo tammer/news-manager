@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 from news_manager.fetch import normalize_url
 from news_manager.models import OutputArticle, PipelineDbRunResult, RawArticle
-from news_manager.pipeline import run_pipeline_from_db
+from news_manager.pipeline import evaluate_single_article_from_db, run_pipeline_from_db
 from news_manager.summarize import SummarizeOutcome
 
 
@@ -491,3 +491,153 @@ def test_run_pipeline_cached_excluded_uses_stored_why(
     assert len(result.article_decisions) == 1
     assert result.article_decisions[0]["included"] is False
     assert result.article_decisions[0]["reason"] == why
+
+
+@patch("news_manager.pipeline.fetch_single_raw_article")
+@patch("news_manager.pipeline.filter_and_summarize_outcome")
+@patch("news_manager.pipeline.fetch_sources_for_category_user")
+@patch("news_manager.pipeline.fetch_category_for_user")
+def test_evaluate_single_article_uses_instruction_override(
+    mock_category: MagicMock,
+    mock_sources: MagicMock,
+    mock_outcome: MagicMock,
+    mock_fetch_one: MagicMock,
+) -> None:
+    mock_category.return_value = {
+        "category_id": "cid-1",
+        "category_name": "News",
+        "category_instruction": "default instruction",
+    }
+    mock_sources.return_value = [{"source_id": "sid-1", "url": "https://a.com", "use_rss": False}]
+    mock_fetch_one.return_value = RawArticle(
+        title="T", date=None, content="c", url="https://a.com/post"
+    )
+    mock_outcome.return_value = SummarizeOutcome(
+        output=OutputArticle(
+            title="T",
+            date=None,
+            content="c",
+            url="https://a.com/post",
+            short_summary="s",
+            full_summary="f",
+            source="a.com",
+        ),
+        outcome="included",
+        why="Matches new rule.",
+    )
+
+    result = evaluate_single_article_from_db(
+        supabase_client=MagicMock(),
+        user_id="user-1",
+        category_id="cid-1",
+        url="https://a.com/post",
+        instructions_override="override instruction",
+    )
+    assert result["included"] is True
+    assert result["reason"] == "Matches new rule."
+    assert result["instruction_source"] == "override"
+    assert mock_outcome.call_args.kwargs["instructions"] == "override instruction"
+
+
+@patch("news_manager.pipeline.fetch_single_raw_article")
+@patch("news_manager.pipeline.fetch_sources_for_category_user")
+@patch("news_manager.pipeline.fetch_category_for_user")
+def test_evaluate_single_article_fetch_failure_returns_reason(
+    mock_category: MagicMock,
+    mock_sources: MagicMock,
+    mock_fetch_one: MagicMock,
+) -> None:
+    mock_category.return_value = {
+        "category_id": "cid-1",
+        "category_name": "News",
+        "category_instruction": "default instruction",
+    }
+    mock_sources.return_value = []
+    mock_fetch_one.return_value = None
+
+    result = evaluate_single_article_from_db(
+        supabase_client=MagicMock(),
+        user_id="user-1",
+        category_id="cid-1",
+        url="https://example.com/a",
+    )
+    assert result["included"] is False
+    assert result["reason"] == "Could not fetch article."
+    assert result["persisted"] is False
+
+
+@patch("news_manager.pipeline.fetch_single_raw_article")
+@patch("news_manager.pipeline.filter_and_summarize_outcome")
+@patch("news_manager.pipeline.fetch_sources_for_category_user")
+@patch("news_manager.pipeline.fetch_category_for_user")
+def test_evaluate_single_article_llm_error_path(
+    mock_category: MagicMock,
+    mock_sources: MagicMock,
+    mock_outcome: MagicMock,
+    mock_fetch_one: MagicMock,
+) -> None:
+    mock_category.return_value = {
+        "category_id": "cid-1",
+        "category_name": "News",
+        "category_instruction": "default instruction",
+    }
+    mock_sources.return_value = []
+    mock_fetch_one.return_value = RawArticle(
+        title="T", date=None, content="c", url="https://example.com/a"
+    )
+    mock_outcome.return_value = SummarizeOutcome(output=None, outcome="error", why=None)
+
+    result = evaluate_single_article_from_db(
+        supabase_client=MagicMock(),
+        user_id="user-1",
+        category_id="cid-1",
+        url="https://example.com/a",
+    )
+    assert result["included"] is False
+    assert result["reason"] == "LLM or parse error"
+
+
+@patch("news_manager.pipeline.upsert_excluded_url_v2")
+@patch("news_manager.pipeline.fetch_single_raw_article")
+@patch("news_manager.pipeline.filter_and_summarize_outcome")
+@patch("news_manager.pipeline.fetch_sources_for_category_user")
+@patch("news_manager.pipeline.fetch_category_for_user")
+def test_evaluate_single_article_excluded_persist_true_writes_exclusion(
+    mock_category: MagicMock,
+    mock_sources: MagicMock,
+    mock_outcome: MagicMock,
+    mock_fetch_one: MagicMock,
+    mock_upsert_excluded: MagicMock,
+) -> None:
+    mock_category.return_value = {
+        "category_id": "cid-1",
+        "category_name": "News",
+        "category_instruction": "default instruction",
+    }
+    mock_sources.return_value = [{"source_id": "sid-1", "url": "https://a.com", "use_rss": False}]
+    mock_fetch_one.return_value = RawArticle(
+        title="T", date=None, content="c", url="https://a.com/post"
+    )
+    mock_outcome.return_value = SummarizeOutcome(
+        output=None, outcome="excluded", why="Out of scope."
+    )
+    mock_upsert_excluded.return_value = None
+
+    sb = MagicMock()
+    result = evaluate_single_article_from_db(
+        supabase_client=sb,
+        user_id="user-1",
+        category_id="cid-1",
+        url="https://a.com/post",
+        persist=True,
+    )
+    assert result["included"] is False
+    assert result["persisted"] is True
+    mock_upsert_excluded.assert_called_once_with(
+        sb,
+        "user-1",
+        "cid-1",
+        "sid-1",
+        "https://a.com/post",
+        "Out of scope.",
+    )

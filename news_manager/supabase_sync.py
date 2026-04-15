@@ -149,6 +149,101 @@ def fetch_sources_with_categories(client: Any, user_id: str) -> list[dict[str, A
     return out
 
 
+def fetch_category_for_user(
+    client: Any, *, user_id: str, category_id: str
+) -> dict[str, str] | None:
+    """Category metadata for one user/category pair, or None when not found."""
+    try:
+        r = (
+            client.table("categories")
+            .select("id, name, instruction")
+            .eq("id", category_id)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as e:
+        raise RuntimeError(
+            f"Supabase fetch category failed for user_id={user_id!r} category_id={category_id!r}: {e}"
+        ) from e
+    rows = r.data or []
+    if not rows:
+        return None
+    row = rows[0]
+    name = row.get("name")
+    instruction = row.get("instruction")
+    return {
+        "category_id": str(row.get("id") or category_id),
+        "category_name": name.strip() if isinstance(name, str) and name.strip() else category_id,
+        "category_instruction": (
+            instruction.strip() if isinstance(instruction, str) and instruction.strip() else ""
+        ),
+    }
+
+
+def fetch_sources_for_category_user(
+    client: Any, *, user_id: str, category_id: str
+) -> list[dict[str, Any]]:
+    """Sources in a category for one user (minimal fields for evaluation/persistence)."""
+    try:
+        r = (
+            client.table("sources")
+            .select("id, url, use_rss")
+            .eq("user_id", user_id)
+            .eq("category_id", category_id)
+            .execute()
+        )
+    except Exception as e:
+        raise RuntimeError(
+            f"Supabase fetch category sources failed for user_id={user_id!r} category_id={category_id!r}: {e}"
+        ) from e
+    out: list[dict[str, Any]] = []
+    for row in r.data or []:
+        url = row.get("url")
+        if not isinstance(url, str) or not url.strip():
+            continue
+        out.append(
+            {
+                "source_id": str(row.get("id") or "").strip(),
+                "url": url.strip(),
+                "use_rss": bool(row.get("use_rss", False)),
+            }
+        )
+    return out
+
+
+def fetch_included_article_for_user(
+    client: Any, *, user_id: str, article_id: str
+) -> dict[str, str] | None:
+    """Resolve a news_articles row by ID scoped to the owning user."""
+    try:
+        r = (
+            client.table("news_articles")
+            .select("id, category_id, url")
+            .eq("id", article_id)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as e:
+        raise RuntimeError(
+            f"Supabase fetch included article failed for user_id={user_id!r} article_id={article_id!r}: {e}"
+        ) from e
+    rows = r.data or []
+    if not rows:
+        return None
+    row = rows[0]
+    url = row.get("url")
+    category = row.get("category_id")
+    if not isinstance(url, str) or not url.strip() or category is None:
+        return None
+    return {
+        "article_id": str(row.get("id") or article_id),
+        "category_id": str(category),
+        "url": url.strip(),
+    }
+
+
 def _clean_optional_text(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
