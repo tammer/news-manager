@@ -1,0 +1,30 @@
+---
+description: Keep API and CLI docs in sync when endpoints or commands change
+alwaysApply: true
+---
+
+# API and CLI documentation
+
+When your change affects **HTTP API behavior** or **installed CLI behavior**, update the matching docs in the same change (or explicitly call out if docs are intentionally deferred).
+
+## API (`resolve-api`, Flask)
+
+Update both:
+
+- `docs/api/for_humans.md` — high-level overview, route table, env vars users care about
+- `docs/api/for_agents.md` — request/response fields, errors, machine-oriented detail
+
+Treat as API-impacting when you touch any of: routes or URL paths, methods, request/response JSON shape, status codes, auth (e.g. JWT), CORS, async job semantics, or server config/env vars documented for operators. Typical code: `news_manager/resolve_app.py` and related modules the API calls.
+
+## CLI (`news-manager`, `fetch-test`, `resolve-api`)
+
+Update both:
+
+- `docs/cli/for_humans.md` — command table and shorthand users should know
+- `docs/cli/for_agents.md` — flags, env vars, exit codes, stdin/stdout contracts
+
+Treat as CLI-impacting when you touch any of: commands or subcommands, flags/options, defaults, stdin/stdout/stderr behavior, exit codes, `pyproject.toml` `[project.scripts]` entry points, or help text that contradicts the docs. Typical code: `news_manager/cli.py`, `news_manager/fetch_test.py`, and console entry targets.
+
+## If unsure
+
+If the change might alter what a **human integrator** or **automated client** would infer from the docs, update the docs or add a short note in your reply about what still needs documenting.
