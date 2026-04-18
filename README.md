@@ -202,6 +202,12 @@ Example:
 
 **`news-manager user-sources import`**: `--email` (required), `--file` (optional; default is stdin).
 
+### Resolve API: admin create user
+
+The **`resolve-api`** Flask app (entrypoint `resolve-api` in `pyproject.toml`) exposes **`POST /api/admin/users`**, which creates a Supabase Auth user and then seeds **`public.categories`** and **`public.sources`** for that user using the same **v1 catalog JSON** shape as **`news-manager user-sources import`**. By default it reads [`news_manager/default_user_catalog.json`](news_manager/default_user_catalog.json); override with **`DEFAULT_USER_CATALOG_PATH`**. The loader returns only **`schema_version`** and **`categories`**, so export files that still contain **`user_id`** / **`email`** at the top level work without passing those fields into the importer.
+
+Provisioning requires **`NEWS_MANAGER_ADMIN_API_KEY`** (sent as `Authorization: Bearer …`); **`SUPABASE_URL`** and **`SUPABASE_SERVICE_ROLE_KEY`**; and JWT settings for the other resolve routes (see [`source_resolve_api.md`](source_resolve_api.md)).
+
 ## Testing
 
 ```bash

@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "categories": [
+    {
+      "category": "HackerNews",
+      "instruction": "## Inclusion\nI am only interested in articles that meet one of these conditions:\n\n1. are at least somewhat related to machine learning or AI\n2. are about an early or growth stage startup receiving new funding.\n\n## Exclusion \n\n- I am not interested in articles about people's small projects\n- I am not interested in articles about current events\n- no politics\n- I am not interested in software design or esoteric computer science\n- I am not interested in personal stories like why someone quit their job\n- Anything that is an attempt to recruit people for an open position at some startup\n- When the main topic is video games or video game development\n- When the article is about someone complaining about something.",
+      "sources": [
+        {
+          "url": "https://news.ycombinator.com/rss",
+          "use_rss": true
+        },
+        {
+          "url": "https://www.lrb.co.uk/feeds/rss",
+          "use_rss": true
+        }
+      ]
+    },
+    {
+      "category": "News",
+      "instruction": "- I am not interested  news about fires, murders or assaults.\n\n- I am not interested in weather forecasts\n\n- I am not interested in politics **unless** it is Canadian politics\n\n- I am **not** interested in **US politics** (elections, Congress, US parties)\n- I am **not** interested in news about celebrities.\n\n- I am **not** interested in \"experts warn\" type articles.  These are articles where one or two experts opine on something and the news outlet tries to turn that into a story.\n\n- I am not interested in sports news.",
+      "sources": [
+        {
+          "url": "https://www.blogto.com/rss/articles.xml",
+          "use_rss": true
+        },
+        {
+          "url": "https://www.cbc.ca/webfeed/rss/rss-canada",
+          "use_rss": true
+        },
+        {
+          "url": "https://www.cbc.ca/webfeed/rss/rss-canada-toronto",
+          "use_rss": true
+        }
+      ]
+    },
+    {
+      "category": "Tech Blogs",
+      "instruction": "1. If the article appears to be an promotion, overview of introduction to a podcast, then I am not interested.\n\n2. I am not interested in articles about San Francisco.",
+      "sources": [
+        {
+          "url": "https://a16z.com/news-content/",
+          "use_rss": false
+        },
+        {
+          "url": "https://garymarcus.substack.com/feed",
+          "use_rss": true
+        },
+        {
+          "url": "https://sequoiacap.com/stories/",
+          "use_rss": false
+        }
+      ]
+    },
+    {
+      "category": "Tech News",
+      "instruction": "- I'm not really interested in stories that focus on India.\n\n- I am not interested in stories that are promoting a podcast.\n\n- I am not interested in crypto.\n\n- I am not interested in stories about US politics and policy.",
+      "sources": [
+        {
+          "url": "https://betakit.com/feed/",
+          "use_rss": true
+        },
+        {
+          "url": "https://www.techcrunch.com/feed/",
+          "use_rss": true
+        }
+      ]
+    }
+  ]
+}

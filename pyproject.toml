@@ -35,6 +35,9 @@ resolve-api = "news_manager.resolve_app:main"
 where = ["."]
 include = ["news_manager*"]
 
+[tool.setuptools.package-data]
+news_manager = ["*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
