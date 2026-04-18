@@ -44,9 +44,17 @@ SUPABASE_SERVICE_ROLE_KEY=...
 
 ## Usage
 
+The CLI has two top-level commands: **`ingest`** (fetch, summarize, sync) and **`user-sources`** (export/import per-user categories and sources as JSON). If you omit the subcommand name, **`ingest` is assumed**—so `news-manager --from-db` is the same as `news-manager ingest --from-db`.
+
 ### File-based (v1 schema)
 
 Create `sources.json` and `instructions.md` (see [plan.md](plan.md)), then:
+
+```bash
+news-manager ingest --sources sources.json --instructions instructions.md
+```
+
+Same thing without the word `ingest`:
 
 ```bash
 news-manager --sources sources.json --instructions instructions.md
@@ -70,7 +78,8 @@ Included rows use natural key **`(url, category)`**; summary fields are refreshe
 When **`public.sources`** are populated and each source’s **`category_id`** points at an existing **`public.categories`** row for that user (with optional **`categories.instruction`** text for the LLM), run ingest without local JSON/Markdown:
 
 ```bash
-news-manager --from-db
+news-manager ingest --from-db
+# or: news-manager --from-db
 ```
 
 Do **not** pass **`--sources`** or **`--instructions`** with **`--from-db`**.
@@ -80,6 +89,63 @@ Apply SQL in order: schema in [`20260411.md`](20260411.md), then [`sql/news_arti
 Filtering/summarization instructions for **`--from-db`** come from **`public.categories.instruction`** (one text per category). All sources sharing that **`category_id`** use the same instruction (see [`new_instructions_plan.md`](new_instructions_plan.md) for the schema migration).
 
 Only users with at least one **`sources`** row are processed. Set **`SUPABASE_URL`** and **`SUPABASE_SERVICE_ROLE_KEY`** as above.
+
+### User catalog JSON (export / import, v2)
+
+Operators can **dump** or **apply** a user’s **`public.categories`** + **`public.sources`** as portable JSON (names, instructions, URLs—no database UUIDs in the payload except optional echo fields). This uses the **service role** client and the Auth **admin** API to resolve **`--email`** to a **`user_id`**. **You do not need `GROQ_API_KEY`** for these commands.
+
+**Export** (pretty-printed JSON on stdout):
+
+```bash
+news-manager user-sources export --email 'you@example.com' > catalog.json
+```
+
+One line on stdout:
+
+```bash
+news-manager user-sources export --email 'you@example.com' --compact
+```
+
+**Import** (merge semantics: existing category **name** → reuse row, do **not** update `instruction`; existing **normalized URL** for that user in any category → skip source insert):
+
+```bash
+news-manager user-sources import --email 'you@example.com' --file catalog.json
+```
+
+Or read JSON from stdin:
+
+```bash
+cat catalog.json | news-manager user-sources import --email 'you@example.com'
+```
+
+On success, import prints a **one-line summary** to stderr (`categories_created`, `categories_reused`, `sources_inserted`, `sources_skipped`).
+
+**JSON shape** (`schema_version` must be **`1`**):
+
+```json
+{
+  "schema_version": 1,
+  "user_id": "uuid-of-user",
+  "email": "you@example.com",
+  "categories": [
+    {
+      "category": "Technology",
+      "instruction": "Text sent to the LLM for this category.",
+      "sources": [
+        { "url": "https://example.com/", "use_rss": false },
+        { "url": "https://example.com/feed", "use_rss": true }
+      ]
+    }
+  ]
+}
+```
+
+- **`email`** on export is optional metadata (echo of the `--email` flag).
+- Each **`sources`** entry must include **`url`** (non-empty string) and **`use_rss`** (boolean).
+
+From Python (for example after creating a user), reuse **`import_user_sources_catalog`** from **`news_manager.user_sources_catalog`** with **`create_supabase_client()`** and the new user’s UUID.
+
+The **`resolve-api`** Flask app also exposes **`POST /api/user/sources/import`**: send the same JSON body with **`Authorization: Bearer <access_token>`**; the server uses the token’s **`sub`** as **`user_id`**. The process must have **`SUPABASE_URL`** and **`SUPABASE_SERVICE_ROLE_KEY`** so the server can write with the service role. Response: **`{ "ok": true, "summary": { ... } }`** on success.
 
 ### Stdout progress lines
 
@@ -120,6 +186,8 @@ Example:
 
 ### Options
 
+**`news-manager ingest`** (and the shorthand without `ingest`):
+
 | Flag | Description |
 |------|-------------|
 | `--from-db` | Load sources and instructions from Supabase (v2); omit `--sources` / `--instructions` |
@@ -129,6 +197,10 @@ Example:
 | `--timeout` | HTTP timeout in seconds (default: 30) |
 | `--content-max-chars` | Max characters of article body sent to the LLM (default: 12000) |
 | `-v`, `--verbose` | INFO logging to stderr |
+
+**`news-manager user-sources export`**: `--email` (required), `--compact` (single-line JSON).
+
+**`news-manager user-sources import`**: `--email` (required), `--file` (optional; default is stdin).
 
 ## Testing
 
