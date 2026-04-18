@@ -1,19 +1,17 @@
-"""Supabase helpers (mocked client)."""
+"""Supabase DB-mode helpers (mocked client)."""
 
 from unittest.mock import MagicMock
 
 from news_manager.models import OutputArticle
 from news_manager.supabase_sync import (
+    delete_excluded_url_v2,
+    delete_included_article_v2,
     fetch_sources_with_categories,
     list_user_ids_with_sources,
-    output_article_to_upsert_row,
     output_article_to_upsert_row_v2,
     parse_article_date_iso,
-    prefetch_processed_urls_for_category,
     prefetch_processed_urls_v2,
-    upsert_excluded_url,
     upsert_excluded_url_v2,
-    upsert_included_article,
     upsert_included_article_v2,
 )
 
@@ -36,197 +34,19 @@ def test_parse_article_date_iso_garbage() -> None:
     assert parse_article_date_iso("not a date") is None
 
 
-def test_output_article_to_upsert_row_omits_date_when_unparseable() -> None:
-    art = OutputArticle(
-        title="  Hi  ",
-        date="nope",
-        content="c",
-        url="https://ex.com/a",
-        short_summary="s",
-        full_summary="f",
-        source="ex.com",
-    )
-    row = output_article_to_upsert_row("News", art)
-    assert row["category"] == "News"
-    assert row["url"] == "https://ex.com/a"
-    assert row["headline"] == "Hi"
-    assert row["source"] == "ex.com"
-    assert row["short_summary"] == "s"
-    assert row["full_summary"] == "f"
-    assert "article_date" not in row
-    assert "read" not in row
-    assert "liked" not in row
-
-
-def test_output_article_to_upsert_row_empty_title() -> None:
-    art = OutputArticle(
-        title="  \n  ",
-        date=None,
-        content="c",
-        url="https://ex.com/b",
-        short_summary="s",
-        full_summary="f",
-        source="src",
-    )
-    row = output_article_to_upsert_row("Tech", art)
-    assert row["headline"] == "(no title)"
-
-
-def test_output_article_to_upsert_row_includes_article_date() -> None:
-    art = OutputArticle(
-        title="T",
-        date="2024-03-20T00:00:00+00:00",
-        content="c",
-        url="https://ex.com/c",
-        short_summary="s",
-        full_summary="f",
-        source="src",
-    )
-    row = output_article_to_upsert_row("Tech", art)
-    assert row["article_date"] == "2024-03-20T00:00:00+00:00"
-
-
-def _client_with_prefetch(news_urls: list[str], excl_urls: list[str]) -> MagicMock:
-    client = MagicMock()
+def _client_v2_prefetch(
+    news_rows: list[dict[str, str | None]], excl_rows: list[dict[str, str | None]]
+) -> MagicMock:
+    """v2 prefetch: news_articles and news_article_exclusions use select().eq().eq().execute()."""
 
     def table(name: str) -> MagicMock:
         t = MagicMock()
-        sel = MagicMock()
-        urls = news_urls if name == "news_articles" else excl_urls
-        sel.execute.return_value = MagicMock(data=[{"url": u} for u in urls])
-        t.select.return_value.eq.return_value = sel
-        up = MagicMock()
-        up.execute.return_value = MagicMock()
-        t.upsert.return_value = up
-        return t
-
-    client.table.side_effect = table
-    return client
-
-
-def test_prefetch_processed_urls_for_category() -> None:
-    client = _client_with_prefetch(
-        news_urls=["https://one.example/p"],
-        excl_urls=["https://two.example/q"],
-    )
-    inc, exc = prefetch_processed_urls_for_category(client, "News")
-    assert "https://one.example/p" in inc
-    assert "https://two.example/q" in exc
-    client.table.assert_called()
-
-
-def test_upsert_included_article_calls_news_articles() -> None:
-    news_table = MagicMock()
-    excl_table = MagicMock()
-    for t in (news_table, excl_table):
-        sel = MagicMock()
-        sel.execute.return_value = MagicMock(data=[])
-        t.select.return_value.eq.return_value = sel
-        up = MagicMock()
-        up.execute.return_value = MagicMock()
-        t.upsert.return_value = up
-
-    client = MagicMock()
-
-    def table(name: str) -> MagicMock:
-        return news_table if name == "news_articles" else excl_table
-
-    client.table.side_effect = table
-
-    art = OutputArticle(
-        title="T",
-        date=None,
-        content="c",
-        url="https://ex.com/z",
-        short_summary="s",
-        full_summary="f",
-        source="src",
-    )
-    assert upsert_included_article(client, "News", art) is None
-    assert news_table.upsert.called
-    kwargs = news_table.upsert.call_args[1]
-    assert kwargs["on_conflict"] == "url,category"
-    assert kwargs["default_to_null"] is False
-
-
-def test_upsert_included_article_returns_error_on_failure() -> None:
-    client = MagicMock()
-
-    def table(_name: str) -> MagicMock:
-        t = MagicMock()
-        sel = MagicMock()
-        sel.execute.return_value = MagicMock(data=[])
-        t.select.return_value.eq.return_value = sel
-        up = MagicMock()
-        up.execute.side_effect = RuntimeError("boom")
-        t.upsert.return_value = up
-        return t
-
-    client.table.side_effect = table
-    art = OutputArticle(
-        title="T",
-        date=None,
-        content="c",
-        url="https://ex.com/z",
-        short_summary="s",
-        full_summary="f",
-        source="src",
-    )
-    err = upsert_included_article(client, "News", art)
-    assert err is not None
-    assert "boom" in err
-
-
-def test_upsert_excluded_url_calls_exclusions_table() -> None:
-    news_table = MagicMock()
-    excl_table = MagicMock()
-    for t in (news_table, excl_table):
-        sel = MagicMock()
-        sel.execute.return_value = MagicMock(data=[])
-        t.select.return_value.eq.return_value = sel
-        up = MagicMock()
-        up.execute.return_value = MagicMock()
-        t.upsert.return_value = up
-
-    client = MagicMock()
-
-    def table(name: str) -> MagicMock:
-        return news_table if name == "news_articles" else excl_table
-
-    client.table.side_effect = table
-
-    assert upsert_excluded_url(client, "https://x.com/a", "News") is None
-    assert excl_table.upsert.called
-    row = excl_table.upsert.call_args[0][0][0]
-    assert row["url"] == "https://x.com/a"
-    assert row["category"] == "News"
-    assert row["why"] is None
-
-
-def test_upsert_excluded_url_passes_why() -> None:
-    excl_table = MagicMock()
-    excl_table.upsert.return_value.execute.return_value = MagicMock()
-    client = MagicMock()
-    client.table.return_value = excl_table
-    assert upsert_excluded_url(client, "https://x.com/b", "News", why="Off-topic.") is None
-    row = excl_table.upsert.call_args[0][0][0]
-    assert row["why"] == "Off-topic."
-
-
-def _client_v2_prefetch(news_urls: list[str], excl_urls: list[str]) -> MagicMock:
-    """v2 prefetch: news_articles uses select().eq().eq().execute(); exclusions one .eq()."""
-
-    def table(name: str) -> MagicMock:
-        t = MagicMock()
-        urls = news_urls if name == "news_articles" else excl_urls
+        rows = news_rows if name == "news_articles" else excl_rows
         exec_mock = MagicMock()
-        exec_mock.execute.return_value = MagicMock(data=[{"url": u} for u in urls])
-        if name == "news_articles":
-            eq_inner = MagicMock()
-            eq_inner.eq.return_value = exec_mock
-            t.select.return_value.eq.return_value = eq_inner
-        else:
-            t.select.return_value.eq.return_value = exec_mock
+        exec_mock.execute.return_value = MagicMock(data=rows)
+        eq_mid = MagicMock()
+        eq_mid.eq.return_value = exec_mock
+        t.select.return_value.eq.return_value = eq_mid
         return t
 
     client = MagicMock()
@@ -236,12 +56,12 @@ def _client_v2_prefetch(news_urls: list[str], excl_urls: list[str]) -> MagicMock
 
 def test_prefetch_processed_urls_v2() -> None:
     client = _client_v2_prefetch(
-        news_urls=["https://one.example/p"],
-        excl_urls=["https://two.example/q"],
+        news_rows=[{"url": "https://one.example/p", "why": "Matches category scope."}],
+        excl_rows=[{"url": "https://two.example/q", "why": "Wrong region."}],
     )
     inc, exc = prefetch_processed_urls_v2(client, "user-1", "cat-uuid")
-    assert "https://one.example/p" in inc
-    assert "https://two.example/q" in exc
+    assert inc["https://one.example/p"] == "Matches category scope."
+    assert exc["https://two.example/q"] == "Wrong region."
 
 
 def test_output_article_to_upsert_row_v2() -> None:
@@ -259,6 +79,7 @@ def test_output_article_to_upsert_row_v2() -> None:
     assert row["category_id"] == "c1"
     assert row["headline"] == "T"
     assert row["article_date"] == "2024-03-20T00:00:00+00:00"
+    assert row["why"] is None
 
 
 def test_list_user_ids_with_sources() -> None:
@@ -282,6 +103,8 @@ def test_fetch_sources_with_categories() -> None:
     sources_t.select.return_value.eq.return_value.execute.return_value = MagicMock(
         data=[
             {
+                "id": "sid1",
+                "name": "A Source",
                 "url": "https://a.com",
                 "use_rss": True,
                 "category_id": "cid1",
@@ -304,6 +127,8 @@ def test_fetch_sources_with_categories() -> None:
     rows = fetch_sources_with_categories(client, "u1")
     assert len(rows) == 1
     assert rows[0]["url"] == "https://a.com"
+    assert rows[0]["source_id"] == "sid1"
+    assert rows[0]["source_name"] == "A Source"
     assert rows[0]["use_rss"] is True
     assert rows[0]["category_id"] == "cid1"
     assert rows[0]["category_name"] == "News"
@@ -316,11 +141,13 @@ def test_fetch_sources_with_categories_null_or_blank_category_instruction() -> N
     sources_t.select.return_value.eq.return_value.execute.return_value = MagicMock(
         data=[
             {
+                "id": "sid1",
                 "url": "https://a.com",
                 "use_rss": True,
                 "category_id": "cid1",
             },
             {
+                "id": "sid2",
                 "url": "https://b.com",
                 "use_rss": False,
                 "category_id": "cid1",
@@ -342,6 +169,10 @@ def test_fetch_sources_with_categories_null_or_blank_category_instruction() -> N
     client.table.side_effect = table
     rows = fetch_sources_with_categories(client, "u1")
     assert len(rows) == 2
+    assert rows[0]["source_id"] == "sid1"
+    assert rows[0]["source_name"] == ""
+    assert rows[1]["source_id"] == "sid2"
+    assert rows[1]["source_name"] == ""
     assert rows[0]["category_instruction"] == ""
     assert rows[1]["category_instruction"] == ""
 
@@ -363,8 +194,36 @@ def test_upsert_included_article_v2_on_conflict() -> None:
         source="src",
     )
     assert upsert_included_article_v2(client, "u1", "c1", art) is None
+    row = news_table.upsert.call_args[0][0][0]
+    assert row["why"] is None
     kwargs = news_table.upsert.call_args[1]
     assert kwargs["on_conflict"] == "user_id,category_id,url"
+
+
+def test_upsert_included_article_v2_passes_why() -> None:
+    news_table = MagicMock()
+    up = MagicMock()
+    up.execute.return_value = MagicMock()
+    news_table.upsert.return_value = up
+    client = MagicMock()
+    client.table.return_value = news_table
+    art = OutputArticle(
+        title="T",
+        date=None,
+        content="c",
+        url="https://ex.com/z",
+        short_summary="s",
+        full_summary="f",
+        source="src",
+    )
+    assert (
+        upsert_included_article_v2(
+            client, "u1", "c1", art, why="Matches all category instructions."
+        )
+        is None
+    )
+    row = news_table.upsert.call_args[0][0][0]
+    assert row["why"] == "Matches all category instructions."
 
 
 def test_upsert_excluded_url_v2() -> None:
@@ -372,10 +231,12 @@ def test_upsert_excluded_url_v2() -> None:
     excl_table.upsert.return_value.execute.return_value = MagicMock()
     client = MagicMock()
     client.table.return_value = excl_table
-    assert upsert_excluded_url_v2(client, "https://x.com/a", "c1") is None
+    assert upsert_excluded_url_v2(client, "u1", "c1", "src-1", "https://x.com/a") is None
     row = excl_table.upsert.call_args[0][0][0]
-    assert row["url"] == "https://x.com/a"
+    assert row["user_id"] == "u1"
     assert row["category_id"] == "c1"
+    assert row["source_id"] == "src-1"
+    assert row["url"] == "https://x.com/a"
     assert row["why"] is None
     assert excl_table.upsert.call_args[1]["on_conflict"] == "category_id,url"
 
@@ -386,6 +247,72 @@ def test_upsert_excluded_url_v2_passes_why() -> None:
     client = MagicMock()
     client.table.return_value = excl_table
     assert (
-        upsert_excluded_url_v2(client, "https://x.com/b", "c1", why="Not a match.") is None
+        upsert_excluded_url_v2(
+            client, "u1", "c1", "src-1", "https://x.com/b", why="Not a match."
+        )
+        is None
     )
     assert excl_table.upsert.call_args[0][0][0]["why"] == "Not a match."
+
+
+def test_delete_included_article_v2_matches_normalized_url() -> None:
+    from news_manager.fetch import normalize_url
+
+    stored = "https://example.com/a?utm=x"
+    nu = normalize_url(stored)
+
+    sel = MagicMock()
+    sel.execute.return_value = MagicMock(data=[{"url": stored}])
+    news_select = MagicMock()
+    news_select.select.return_value.eq.return_value.eq.return_value = sel
+
+    dele = MagicMock()
+    dele.execute.return_value = MagicMock()
+    news_delete = MagicMock()
+    news_delete.delete.return_value.eq.return_value.eq.return_value.eq.return_value = dele
+
+    client = MagicMock()
+    _news_i = 0
+
+    def table(name: str) -> MagicMock:
+        nonlocal _news_i
+        if name == "news_articles":
+            _news_i += 1
+            return news_select if _news_i == 1 else news_delete
+        raise AssertionError(name)
+
+    client.table.side_effect = table
+    assert delete_included_article_v2(client, "u1", "c1", nu) is None
+    dele.execute.assert_called_once()
+
+
+def test_delete_excluded_url_v2_matches_normalized_url() -> None:
+    from news_manager.fetch import normalize_url
+
+    stored = "https://ex.com/p?q=1"
+    nu = normalize_url(stored)
+
+    sel = MagicMock()
+    sel.execute.return_value = MagicMock(data=[{"url": stored}])
+    excl = MagicMock()
+    excl.select.return_value.eq.return_value.eq.return_value = sel
+
+    dele = MagicMock()
+    dele.execute.return_value = MagicMock()
+    excl2 = MagicMock()
+    excl2.delete.return_value.eq.return_value.eq.return_value.eq.return_value = dele
+
+    client = MagicMock()
+    first = True
+
+    def table(name: str) -> MagicMock:
+        nonlocal first
+        assert name == "news_article_exclusions"
+        if first:
+            first = False
+            return excl
+        return excl2
+
+    client.table.side_effect = table
+    assert delete_excluded_url_v2(client, "u1", "c1", nu) is None
+    dele.execute.assert_called_once()

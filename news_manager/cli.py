@@ -14,11 +14,9 @@ from news_manager.config import (
     DEFAULT_MAX_ARTICLES,
     groq_api_key,
     load_dotenv_if_present,
-    read_instructions,
-    read_sources_json,
     supabase_settings,
 )
-from news_manager.pipeline import run_pipeline, run_pipeline_from_db
+from news_manager.pipeline import run_pipeline_from_db
 from news_manager.supabase_sync import create_supabase_client
 from news_manager.user_sources_catalog import (
     export_user_sources_catalog,
@@ -41,20 +39,6 @@ def _normalize_cli_argv(argv: list[str]) -> list[str]:
 
 
 def _cmd_ingest(args: argparse.Namespace) -> int:
-    if args.from_db:
-        if args.sources is not None or args.instructions is not None:
-            print(
-                "Do not pass --sources or --instructions with --from-db.",
-                file=sys.stderr,
-            )
-            return 2
-    elif args.sources is None or args.instructions is None:
-        print(
-            "--sources and --instructions are required unless you pass --from-db.",
-            file=sys.stderr,
-        )
-        return 2
-
     try:
         supabase_settings()
     except ValueError as e:
@@ -67,42 +51,18 @@ def _cmd_ingest(args: argparse.Namespace) -> int:
         print(str(e), file=sys.stderr)
         return 1
 
-    if not args.from_db:
-        assert args.sources is not None and args.instructions is not None
-        try:
-            categories = read_sources_json(args.sources)
-        except (OSError, ValueError) as e:
-            print(str(e), file=sys.stderr)
-            return 1
-
-        try:
-            instructions = read_instructions(args.instructions)
-        except OSError as e:
-            print(str(e), file=sys.stderr)
-            return 1
-    else:
-        categories = None
-        instructions = None
-
     try:
         sb = create_supabase_client()
-        if args.from_db:
-            run_pipeline_from_db(
-                supabase_client=sb,
-                max_articles=args.max_articles,
-                http_timeout=args.timeout,
-                content_max_chars=args.content_max_chars,
-            )
-        else:
-            assert categories is not None and instructions is not None
-            run_pipeline(
-                categories,
-                instructions,
-                supabase_client=sb,
-                max_articles=args.max_articles,
-                http_timeout=args.timeout,
-                content_max_chars=args.content_max_chars,
-            )
+        _ = run_pipeline_from_db(
+            supabase_client=sb,
+            max_articles=args.max_articles,
+            http_timeout=args.timeout,
+            content_max_chars=args.content_max_chars,
+            user_id_selector=args.user_id,
+            category_selector=args.category,
+            source_selector=args.source,
+            reprocess=args.reprocess,
+        )
     except RuntimeError as e:
         print(str(e), file=sys.stderr)
         return 1
@@ -197,19 +157,33 @@ def _build_parser() -> argparse.ArgumentParser:
     ingest.add_argument(
         "--from-db",
         action="store_true",
-        help="Load sources and instructions from Supabase (Gistprism v2); do not pass --sources/--instructions.",
+        help="Deprecated no-op. DB-backed ingest is the only mode.",
     )
     ingest.add_argument(
-        "--sources",
-        type=Path,
+        "--category",
+        type=str,
         default=None,
-        help="Path to sources.json (required unless --from-db)",
+        help="Limit ingest to one category (match by category id or name).",
     )
     ingest.add_argument(
-        "--instructions",
-        type=Path,
+        "--source",
+        type=str,
         default=None,
-        help="Path to instructions.md (required unless --from-db)",
+        help="Limit ingest to one source (match by source id or name).",
+    )
+    ingest.add_argument(
+        "--user-id",
+        type=str,
+        default=None,
+        help="Limit ingest to one user (exact user_id match).",
+    )
+    ingest.add_argument(
+        "--reprocess",
+        action="store_true",
+        help=(
+            "Delete cached news_articles / news_article_exclusions rows and "
+            "re-fetch + LLM for those URLs."
+        ),
     )
     ingest.add_argument(
         "--max-articles",

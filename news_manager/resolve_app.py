@@ -6,6 +6,7 @@ import hmac
 import json
 import logging
 import os
+from typing import Any
 
 import jwt
 from flask import Flask, jsonify, request
@@ -18,6 +19,9 @@ from news_manager.auth_admin import (
 )
 from news_manager.auth_supabase import verify_supabase_jwt
 from news_manager.config import (
+    DEFAULT_CONTENT_MAX_CHARS,
+    DEFAULT_HTTP_TIMEOUT,
+    DEFAULT_MAX_ARTICLES,
     assert_resolve_api_supabase_auth_config,
     groq_api_key,
     load_default_user_catalog_dict,
@@ -25,11 +29,23 @@ from news_manager.config import (
     news_manager_admin_api_key_optional,
     supabase_settings,
 )
+from news_manager.pipeline import evaluate_single_article_from_db
+from news_manager.pipeline_jobs import (
+    PipelineRunParams,
+    get_pipeline_job,
+    get_pipeline_job_owner_user_id,
+    start_pipeline_job,
+)
 from news_manager.source_resolve import resolve_source_json_body
 from news_manager.supabase_sync import create_supabase_client
 from news_manager.user_sources_catalog import import_user_sources_catalog
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_CORS_ORIGINS = (
+    "http://localhost:5173",
+    "https://gistprism.tammer.com",
+)
 
 
 def _normalize_origin(value: str | None) -> str | None:
@@ -39,9 +55,176 @@ def _normalize_origin(value: str | None) -> str | None:
 
 
 def _allowed_cors_origins() -> frozenset[str]:
-    raw = os.environ.get("RESOLVE_CORS_ORIGIN", "http://localhost:5173").strip()
-    parts = [p.strip() for p in raw.split(",") if p.strip()]
-    return frozenset(_normalize_origin(p) for p in parts)
+    raw = os.environ.get("RESOLVE_CORS_ORIGIN", "").strip()
+    parts = list(DEFAULT_CORS_ORIGINS)
+    parts.extend(p.strip() for p in raw.split(",") if p.strip())
+    normalized = (_normalize_origin(p) for p in parts)
+    return frozenset(p for p in normalized if p)
+
+
+def _auth_required_response() -> tuple[object, int]:
+    return (
+        jsonify(
+            {
+                "ok": False,
+                "error": "no_results",
+                "message": "Authorization Bearer token required.",
+            }
+        ),
+        401,
+    )
+
+
+def _invalid_token_response() -> tuple[object, int]:
+    return (
+        jsonify(
+            {
+                "ok": False,
+                "error": "no_results",
+                "message": "Invalid or expired token.",
+            }
+        ),
+        401,
+    )
+
+
+def _require_auth_claims() -> tuple[dict[str, Any] | None, tuple[object, int] | None]:
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return None, _auth_required_response()
+    token = auth[7:].strip()
+    if not token:
+        return None, _auth_required_response()
+    try:
+        claims = verify_supabase_jwt(token)
+    except jwt.PyJWTError as e:
+        logger.debug("JWT verification failed: %s", e)
+        return None, _invalid_token_response()
+    return claims, None
+
+
+def _json_error(message: str, *, status: int, error: str = "no_results") -> tuple[object, int]:
+    return jsonify({"ok": False, "error": error, "message": message}), status
+
+
+def _optional_str_field(body: dict[str, Any], key: str) -> tuple[str | None, tuple[object, int] | None]:
+    value = body.get(key)
+    if value is None:
+        return None, None
+    if not isinstance(value, str):
+        return None, _json_error(f"'{key}' must be a string.", status=400)
+    trimmed = value.strip()
+    return (trimmed or None), None
+
+
+def _required_sub(claims: dict[str, Any]) -> tuple[str | None, tuple[object, int] | None]:
+    sub = claims.get("sub")
+    if not isinstance(sub, str) or not sub.strip():
+        return None, _json_error("Token missing required 'sub' claim.", status=401)
+    return sub.strip(), None
+
+
+def _parse_pipeline_run_request(
+    *,
+    body: dict[str, Any],
+    auth_user_id: str,
+) -> tuple[PipelineRunParams | None, tuple[object, int] | None]:
+    category, category_err = _optional_str_field(body, "category")
+    if category_err is not None:
+        return None, category_err
+    source, source_err = _optional_str_field(body, "source")
+    if source_err is not None:
+        return None, source_err
+    user_id, user_id_err = _optional_str_field(body, "user_id")
+    if user_id_err is not None:
+        return None, user_id_err
+    if user_id is not None and user_id != auth_user_id:
+        return None, _json_error(
+            "Provided user_id does not match authenticated user.",
+            status=403,
+            error="forbidden",
+        )
+
+    max_articles = body.get("max_articles", DEFAULT_MAX_ARTICLES)
+    if not isinstance(max_articles, int):
+        return None, _json_error("'max_articles' must be an integer.", status=400)
+
+    timeout = body.get("timeout", DEFAULT_HTTP_TIMEOUT)
+    if not isinstance(timeout, (int, float)):
+        return None, _json_error("'timeout' must be a number.", status=400)
+
+    content_max_chars = body.get("content_max_chars", DEFAULT_CONTENT_MAX_CHARS)
+    if not isinstance(content_max_chars, int):
+        return None, _json_error("'content_max_chars' must be an integer.", status=400)
+
+    reprocess = body.get("reprocess", False)
+    if not isinstance(reprocess, bool):
+        return None, _json_error("'reprocess' must be a boolean.", status=400)
+
+    return (
+        PipelineRunParams(
+            user_id=auth_user_id,
+            category=category,
+            source=source,
+            max_articles=max_articles,
+            timeout=float(timeout),
+            content_max_chars=content_max_chars,
+            reprocess=reprocess,
+        ),
+        None,
+    )
+
+
+def _parse_evaluate_article_request(
+    *,
+    body: dict[str, Any],
+) -> tuple[dict[str, Any] | None, tuple[object, int] | None]:
+    category_id, category_err = _optional_str_field(body, "category_id")
+    if category_err is not None:
+        return None, category_err
+    if category_id is None:
+        return None, _json_error("'category_id' is required.", status=400)
+
+    url, url_err = _optional_str_field(body, "url")
+    if url_err is not None:
+        return None, url_err
+    article_id, article_err = _optional_str_field(body, "article_id")
+    if article_err is not None:
+        return None, article_err
+
+    if bool(url) == bool(article_id):
+        return None, _json_error("Provide exactly one of 'url' or 'article_id'.", status=400)
+
+    instructions_override, instructions_err = _optional_str_field(
+        body, "instructions_override"
+    )
+    if instructions_err is not None:
+        return None, instructions_err
+
+    persist = body.get("persist", False)
+    if not isinstance(persist, bool):
+        return None, _json_error("'persist' must be a boolean.", status=400)
+
+    content_max_chars = body.get("content_max_chars", DEFAULT_CONTENT_MAX_CHARS)
+    if not isinstance(content_max_chars, int):
+        return None, _json_error("'content_max_chars' must be an integer.", status=400)
+
+    timeout = body.get("timeout", DEFAULT_HTTP_TIMEOUT)
+    if not isinstance(timeout, (int, float)):
+        return None, _json_error("'timeout' must be a number.", status=400)
+
+    return (
+        {
+            "category_id": category_id,
+            "url": url,
+            "article_id": article_id,
+            "instructions_override": instructions_override,
+            "persist": persist,
+            "content_max_chars": content_max_chars,
+            "timeout": float(timeout),
+        },
+        None,
+    )
 
 
 def _admin_bearer_matches(header: str, *, expected: str) -> bool:
@@ -66,7 +249,7 @@ def create_app() -> Flask:
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Vary"] = "Origin"
             response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
-            response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+            response.headers["Access-Control-Allow-Methods"] = "POST, GET, OPTIONS"
             response.headers["Access-Control-Max-Age"] = "86400"
         return response
 
@@ -76,44 +259,9 @@ def create_app() -> Flask:
 
     @app.post("/api/sources/resolve")
     def resolve() -> tuple[object, int]:
-        auth = request.headers.get("Authorization", "")
-        if not auth.startswith("Bearer "):
-            return (
-                jsonify(
-                    {
-                        "ok": False,
-                        "error": "no_results",
-                        "message": "Authorization Bearer token required.",
-                    }
-                ),
-                401,
-            )
-        token = auth[7:].strip()
-        if not token:
-            return (
-                jsonify(
-                    {
-                        "ok": False,
-                        "error": "no_results",
-                        "message": "Authorization Bearer token required.",
-                    }
-                ),
-                401,
-            )
-        try:
-            verify_supabase_jwt(token)
-        except jwt.PyJWTError as e:
-            logger.debug("JWT verification failed: %s", e)
-            return (
-                jsonify(
-                    {
-                        "ok": False,
-                        "error": "no_results",
-                        "message": "Invalid or expired token.",
-                    }
-                ),
-                401,
-            )
+        _claims, auth_err = _require_auth_claims()
+        if auth_err is not None:
+            return auth_err
 
         payload, status = resolve_source_json_body(request.get_data())
         return jsonify(payload), status
@@ -463,6 +611,137 @@ def create_app() -> Flask:
             ),
             200,
         )
+
+    @app.route("/api/pipeline/run", methods=["OPTIONS"])
+    def pipeline_run_preflight() -> tuple[str, int]:
+        return "", 204
+
+    @app.post("/api/pipeline/run")
+    def pipeline_run_start() -> tuple[object, int]:
+        claims, auth_err = _require_auth_claims()
+        if auth_err is not None:
+            return auth_err
+        assert claims is not None
+        auth_user_id, sub_err = _required_sub(claims)
+        if sub_err is not None:
+            return sub_err
+        assert auth_user_id is not None
+
+        body = request.get_json(silent=True)
+        if body is None:
+            return _json_error("Body must be a JSON object.", status=400)
+        if not isinstance(body, dict):
+            return _json_error("Body must be a JSON object.", status=400)
+
+        params, parse_err = _parse_pipeline_run_request(body=body, auth_user_id=auth_user_id)
+        if parse_err is not None:
+            return parse_err
+        assert params is not None
+
+        job = start_pipeline_job(params=params)
+        return (
+            jsonify(
+                {
+                    "ok": True,
+                    "job_id": job["job_id"],
+                    "status": job["status"],
+                }
+            ),
+            202,
+        )
+
+    @app.route("/api/pipeline/run/<job_id>", methods=["OPTIONS"])
+    def pipeline_run_status_preflight(job_id: str) -> tuple[str, int]:
+        _ = job_id
+        return "", 204
+
+    @app.get("/api/pipeline/run/<job_id>")
+    def pipeline_run_status(job_id: str) -> tuple[object, int]:
+        claims, auth_err = _require_auth_claims()
+        if auth_err is not None:
+            return auth_err
+        assert claims is not None
+        auth_user_id, sub_err = _required_sub(claims)
+        if sub_err is not None:
+            return sub_err
+        assert auth_user_id is not None
+
+        owner = get_pipeline_job_owner_user_id(job_id)
+        if owner is None:
+            return _json_error("Pipeline job not found.", status=404, error="not_found")
+        if owner != auth_user_id:
+            return _json_error(
+                "You are not allowed to access this pipeline job.",
+                status=403,
+                error="forbidden",
+            )
+
+        payload = get_pipeline_job(job_id)
+        if payload is None:
+            return _json_error("Pipeline job not found.", status=404, error="not_found")
+        return jsonify(payload), 200
+
+    @app.route("/api/pipeline/evaluate-article", methods=["OPTIONS"])
+    def pipeline_evaluate_article_preflight() -> tuple[str, int]:
+        return "", 204
+
+    @app.post("/api/pipeline/evaluate-article")
+    def pipeline_evaluate_article() -> tuple[object, int]:
+        claims, auth_err = _require_auth_claims()
+        if auth_err is not None:
+            return auth_err
+        assert claims is not None
+        auth_user_id, sub_err = _required_sub(claims)
+        if sub_err is not None:
+            return sub_err
+        assert auth_user_id is not None
+
+        body = request.get_json(silent=True)
+        if body is None or not isinstance(body, dict):
+            return _json_error("Body must be a JSON object.", status=400)
+
+        parsed, parse_err = _parse_evaluate_article_request(body=body)
+        if parse_err is not None:
+            return parse_err
+        assert parsed is not None
+
+        supabase_client = create_supabase_client()
+        try:
+            decision = evaluate_single_article_from_db(
+                supabase_client=supabase_client,
+                user_id=auth_user_id,
+                category_id=parsed["category_id"],
+                url=parsed["url"],
+                article_id=parsed["article_id"],
+                instructions_override=parsed["instructions_override"],
+                persist=parsed["persist"],
+                http_timeout=parsed["timeout"],
+                content_max_chars=parsed["content_max_chars"],
+            )
+        except ValueError as e:
+            return _json_error(str(e), status=400)
+        except LookupError as e:
+            return _json_error(str(e), status=404, error="not_found")
+        except RuntimeError as e:
+            return _json_error(str(e), status=500)
+
+        payload = {
+            "ok": True,
+            "included": decision["included"],
+            "why": decision["reason"],
+            "url": decision["url"],
+            "title": decision["title"],
+            "date": decision["date"],
+            "source": decision["source"],
+            "short_summary": decision["short_summary"],
+            "full_summary": decision["full_summary"],
+            "persisted": decision["persisted"],
+            "instruction_source": decision["instruction_source"],
+        }
+        persist_error = decision.get("persist_error")
+        if isinstance(persist_error, str) and persist_error.strip():
+            payload["persist_error"] = persist_error
+        return jsonify(payload), 200
 
     return app
 

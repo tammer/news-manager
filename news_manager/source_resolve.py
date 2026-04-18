@@ -10,10 +10,12 @@ import socket
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
+import feedparser
 import httpx
 from bs4 import BeautifulSoup
 
 from news_manager.config import DEFAULT_HTTP_TIMEOUT, groq_model
+from news_manager.fetch import _looks_like_feed_xml
 from news_manager.llm import get_client
 from news_manager.summarize import _parse_json_response
 
@@ -312,6 +314,43 @@ def _looks_like_feed_url(url: str) -> bool:
     return any(x in u for x in ("/feed", "rss", "atom", ".xml"))
 
 
+def _site_host_key(hostname: str | None) -> str:
+    if not hostname:
+        return ""
+    h = hostname.lower()
+    if h.startswith("www."):
+        h = h[4:]
+    return h
+
+
+def _listing_path_prefix(path: str) -> str:
+    """Directory-style prefix for scope checks (no trailing slash, except root)."""
+    p = path or ""
+    if p in ("", "/"):
+        return ""
+    return p.rstrip("/")
+
+
+def _feed_matches_listing_scope(listing_url: str, feed_url: str) -> bool:
+    """
+    If the listing is not the site root, only accept feeds whose path is the same
+    section or below it. Avoids using a site-wide /index.rss when the user picked
+    a topic hub like /hub/book-reviews.
+    """
+    a, b = urlparse(listing_url), urlparse(feed_url)
+    if a.scheme not in ("http", "https") or b.scheme not in ("http", "https"):
+        return False
+    if _site_host_key(a.hostname) != _site_host_key(b.hostname):
+        return False
+    prefix = _listing_path_prefix(a.path)
+    if not prefix:
+        return True
+    fp = _listing_path_prefix(b.path)
+    if fp == prefix:
+        return True
+    return fp.startswith(prefix + "/")
+
+
 def resolve_source(
     user_query: str,
     *,
@@ -335,7 +374,22 @@ def resolve_source(
     if not rows:
         return {"ok": False, "error": "no_results", "message": "No usable search results for that query."}
 
-    picked = _llm_pick_homepage(q, rows)
+    # Single pasted URL: do not ask the LLM for a "canonical homepage" — it often
+    # returns the domain root, which breaks section hubs and feed path scoping.
+    if len(rows) == 1 and (rows[0].get("body") or "").strip() == "direct":
+        href0 = (rows[0].get("href") or "").strip()
+        picked: dict[str, Any] | None = (
+            {
+                "homepage_url": href0,
+                "website_title": "",
+                "confidence": "high",
+                "notes": "",
+            }
+            if href0
+            else None
+        )
+    else:
+        picked = _llm_pick_homepage(q, rows)
     homepage = None
     website_title = ""
     confidence = "medium"
@@ -366,6 +420,23 @@ def resolve_source(
         return {"ok": False, "error": "upstream_timeout", "message": "Could not fetch the homepage."}
 
     homepage_final = _scrub_url(final_url)
+
+    if _looks_like_feed_xml(html):
+        ft = (feedparser.parse(html).feed.get("title") or "").strip()
+        wt = (website_title or "").strip() or ft or urlparse(homepage_final).netloc
+        notes_parts.append("Input URL is an RSS/Atom feed; using it for ingest.")
+        notes = " ".join(notes_parts).strip()
+        return {
+            "ok": True,
+            "website_title": wt,
+            "homepage_url": homepage_final,
+            "resolved_url": homepage_final,
+            "use_rss": True,
+            "rss_found": True,
+            "confidence": confidence,
+            "notes": notes,
+        }
+
     if not website_title:
         website_title = _page_title(html) or urlparse(homepage_final).netloc
 
@@ -377,10 +448,12 @@ def resolve_source(
             all_feeds.append(u)
 
     rss_found = len(all_feeds) > 0
-    if rss_found:
-        best_feed = all_feeds[0]
-        if not _looks_like_feed_url(best_feed) and len(all_feeds) > 1:
-            for u in all_feeds:
+    scoped_feeds = [u for u in all_feeds if _feed_matches_listing_scope(homepage_final, u)]
+
+    if scoped_feeds:
+        best_feed = scoped_feeds[0]
+        if not _looks_like_feed_url(best_feed) and len(scoped_feeds) > 1:
+            for u in scoped_feeds:
                 if _looks_like_feed_url(u):
                     best_feed = u
                     break
@@ -388,6 +461,10 @@ def resolve_source(
         use_rss = True
         notes_parts.append("RSS/Atom feed found; using feed URL for ingest (skips subscribe/JS-only homepages).")
     else:
+        if rss_found:
+            notes_parts.append(
+                "RSS/Atom on page is site-wide, not this URL path; using HTML listing URL."
+            )
         excerpt = html[:_MAX_HTML_FOR_LLM]
         listing = _llm_is_article_listing(homepage_final, excerpt)
         is_listing = True
@@ -406,7 +483,8 @@ def resolve_source(
 
         resolved_url = homepage_final
         use_rss = False
-        notes_parts.append("No feed found; use HTML listing URL.")
+        if not rss_found:
+            notes_parts.append("No feed found; use HTML listing URL.")
 
     notes = " ".join(notes_parts).strip()
 
