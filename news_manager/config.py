@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import json
 import os
-from pathlib import Path
-from typing import Any
 
 from dotenv import load_dotenv
 
@@ -89,48 +86,3 @@ def supabase_settings() -> tuple[str, str]:
             "Add them to your environment or .env file."
         )
     return url, key
-
-
-def news_manager_admin_api_key_optional() -> str | None:
-    """Bearer token value for privileged admin routes (e.g. create user)."""
-    s = os.environ.get("NEWS_MANAGER_ADMIN_API_KEY", "").strip()
-    return s or None
-
-
-def load_default_user_catalog_dict() -> dict[str, Any]:
-    """
-    Load v1 default catalog JSON for new-user provisioning.
-
-    Uses ``DEFAULT_USER_CATALOG_PATH`` when set (any path); otherwise
-    ``news_manager/default_user_catalog.json`` next to this package.
-
-    Returns only ``schema_version`` and ``categories`` so export-shaped files
-    (extra ``user_id``, ``email``, etc.) do not confuse downstream code.
-    """
-    path_str = os.environ.get("DEFAULT_USER_CATALOG_PATH", "").strip()
-    if path_str:
-        p = Path(path_str).expanduser()
-        if not p.is_file():
-            raise ValueError(f"DEFAULT_USER_CATALOG_PATH is not a file: {p}")
-    else:
-        p = Path(__file__).resolve().parent / "default_user_catalog.json"
-        if not p.is_file():
-            raise ValueError(f"Default user catalog missing at {p}")
-    text = p.read_text(encoding="utf-8")
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Invalid JSON in default user catalog {p}: {e}") from e
-    if not isinstance(data, dict):
-        raise ValueError(f"Default user catalog must be a JSON object: {p}")
-    ver = data.get("schema_version", 1)
-    if ver != 1:
-        raise ValueError(
-            f"Unsupported schema_version in default user catalog {p}: {ver!r} (expected 1)."
-        )
-    cats = data.get("categories")
-    if cats is None:
-        raise ValueError(f"Default user catalog missing 'categories' array: {p}")
-    if not isinstance(cats, list):
-        raise ValueError(f"Default user catalog 'categories' must be an array: {p}")
-    return {"schema_version": 1, "categories": list(cats)}
