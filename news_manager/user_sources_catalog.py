@@ -225,7 +225,7 @@ def _select_category_id(client: Any, user_id: str, name: str) -> str | None:
 def _insert_category(client: Any, user_id: str, name: str, instruction: str) -> str:
     row = {"user_id": user_id, "name": name, "instruction": instruction}
     try:
-        r = client.table("categories").insert(row).select("id").execute()
+        r = client.table("categories").insert(row).execute()
     except Exception as e:
         raise RuntimeError(f"Supabase categories insert failed: {e}") from e
     data = r.data or []

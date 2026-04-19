@@ -86,9 +86,9 @@ def test_import_user_sources_catalog_creates_category_and_sources() -> None:
     eq_uid.eq.return_value = eq_name
     categories_t.select.return_value.eq.return_value = eq_uid
 
-    cat_insert_exec = MagicMock()
-    cat_insert_exec.execute.return_value = MagicMock(data=[{"id": "new-cat"}])
-    categories_t.insert.return_value.select.return_value = cat_insert_exec
+    cat_insert_builder = MagicMock()
+    cat_insert_builder.execute.return_value = MagicMock(data=[{"id": "new-cat"}])
+    categories_t.insert.return_value = cat_insert_builder
 
     def table(name: str) -> MagicMock:
         if name == "sources":
