@@ -252,58 +252,14 @@ def create_app() -> Flask:
 
     @app.post("/api/user/sources/import")
     def user_sources_import() -> tuple[object, int]:
-        auth = request.headers.get("Authorization", "")
-        if not auth.startswith("Bearer "):
-            return (
-                jsonify(
-                    {
-                        "ok": False,
-                        "error": "unauthorized",
-                        "message": "Authorization Bearer token required.",
-                    }
-                ),
-                401,
-            )
-        token = auth[7:].strip()
-        if not token:
-            return (
-                jsonify(
-                    {
-                        "ok": False,
-                        "error": "unauthorized",
-                        "message": "Authorization Bearer token required.",
-                    }
-                ),
-                401,
-            )
-        try:
-            claims = verify_supabase_jwt(token)
-        except jwt.PyJWTError as e:
-            logger.debug("JWT verification failed: %s", e)
-            return (
-                jsonify(
-                    {
-                        "ok": False,
-                        "error": "unauthorized",
-                        "message": "Invalid or expired token.",
-                    }
-                ),
-                401,
-            )
-
-        sub = claims.get("sub")
-        if not isinstance(sub, str) or not sub.strip():
-            return (
-                jsonify(
-                    {
-                        "ok": False,
-                        "error": "invalid_token",
-                        "message": "Token missing subject (sub).",
-                    }
-                ),
-                401,
-            )
-        user_id = sub.strip()
+        claims, auth_err = _require_auth_claims()
+        if auth_err is not None:
+            return auth_err
+        assert claims is not None
+        user_id, sub_err = _required_sub(claims)
+        if sub_err is not None:
+            return sub_err
+        assert user_id is not None
 
         try:
             raw_b = request.get_data(cache=False)

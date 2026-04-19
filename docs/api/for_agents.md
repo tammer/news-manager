@@ -92,9 +92,30 @@ Malformed JSON or missing `query` → **400** with `ok: false`, `error: "no_resu
 
 **Purpose:** Merge a **portable catalog** of categories and sources into **`public.categories`** and **`public.sources`** for the user identified by JWT **`sub`**. Inserts use the **service role** Supabase client on the server (bypasses RLS).
 
-**Auth:** **Required** — **`Authorization: Bearer`**. Invalid/expired → **401** (`error: "unauthorized"`). Missing **`sub`** → **401** (`error: "invalid_token"`).
+**Auth:** **Required** — **`Authorization: Bearer`**. Same rules as other JWT routes: missing/invalid token → **401** with `error: "no_results"` (see messages below). Missing or empty **`sub`** → **401** with `error: "no_results"` and message **`Token missing required 'sub' claim.`**
 
 **Server env:** **`SUPABASE_URL`** and **`SUPABASE_SERVICE_ROLE_KEY`** must be set; otherwise **503** with `error: "server_misconfigured"` and `message` from configuration validation.
+
+**Client integration:** Use the **same JSON body** as **`news-manager user-sources import`** (file or stdin): a catalog object with **`categories`** (and optional **`schema_version`**). Replace **`ACCESS_TOKEN`** with the user’s Supabase **access** JWT (same token you would send to **`POST /api/sources/resolve`**).
+
+```bash
+curl -sS -X POST "http://localhost:5000/api/user/sources/import" \
+  -H "Authorization: Bearer ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data-binary @catalog.json
+```
+
+```javascript
+const res = await fetch("/api/user/sources/import", {
+  method: "POST",
+  headers: {
+    Authorization: `Bearer ${accessToken}`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify(catalog),
+});
+const data = await res.json();
+```
 
 **Request body:** JSON object (see `news_manager.user_sources_catalog`).
 
@@ -141,7 +162,7 @@ Each source:
 | 400 | `invalid_json` | Body is not valid JSON. |
 | 400 | `invalid_body` | Body is empty or not a JSON object. |
 | 400 | `validation_error` | Payload failed validation (`message` has detail). |
-| 401 | `unauthorized` / `invalid_token` | Missing Bearer, bad JWT, or missing `sub`. |
+| 401 | `no_results` | Missing Bearer, empty token, invalid/expired JWT, or missing/non-string `sub` (same shape as **`POST /api/sources/resolve`** / **`POST /api/pipeline/run`**). |
 | 500 | `import_failed` | Supabase or runtime error during import (`message` has detail). |
 | 503 | `server_misconfigured` | Missing Supabase URL/key for service client. |
 
