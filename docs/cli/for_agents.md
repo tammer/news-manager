@@ -32,6 +32,8 @@ Top-level subcommands (required after normalization):
 
 **Behavior:** Loads **`SUPABASE_URL`** + **`SUPABASE_SERVICE_ROLE_KEY`**, **`GROQ_API_KEY`**, creates a Supabase service-role client, and runs **`run_pipeline_from_db`** with the given selectors and limits.
 
+**Source URLs (`public.sources`):** Ingest performs a **single GET** per source, then classifies the response. **`use_rss = false`** (**auto**): try RSS/Atom entries, else URL sitemap **`<loc>`** URLs (Sitemap 0.9 `urlset`), else same-site HTML links. **`use_rss = true`** (**force feed/XML**): only RSS/Atom or sitemap on that URL (no HTML link crawl). Sitemap **index** documents (`<sitemapindex>`) are detected but not followed (empty discovery until a leaf sitemap URL is configured).
+
 **Environment (required):**
 
 | Variable | Role |
@@ -40,7 +42,13 @@ Top-level subcommands (required after normalization):
 | `SUPABASE_SERVICE_ROLE_KEY` | Service role key (REST + same process behavior as server-side jobs) |
 | `GROQ_API_KEY` | Groq API key for LLM calls |
 
-**Optional:** `GROQ_MODEL` (defaults in `news_manager.config`).
+**Optional environment:**
+
+| Variable | Role |
+|----------|------|
+| `GROQ_MODEL` | Model for article filter/summarize (default in `news_manager.config`). |
+| `GROQ_MODEL_HTML_DISCOVERY` | If set, model used only for **HTML homepage link picking** when **`--html-discovery-llm`** is on; otherwise **`GROQ_MODEL`** is used. |
+| `HTML_DISCOVERY_MAX_CANDIDATES` | Max homepage anchor rows sent to that step (default **200**, clamped to **1–500**). |
 
 **Flags:**
 
@@ -51,10 +59,11 @@ Top-level subcommands (required after normalization):
 | `--source` | string | unset | Limit to one source (match by source id or name—see pipeline). |
 | `--user-id` | string | unset | Limit to one user (**exact** `user_id` / `auth.users.id`). |
 | `--reprocess` | flag | off | When set, pipeline deletes cached **`news_articles`** / **`news_article_exclusions`** rows for matched work and re-fetches + LLM (see help text in `cli.py`). |
+| `--html-discovery-llm` | flag | off | When **auto** discovery ends on an **HTML** listing (not RSS/sitemap), optionally call Groq to pick article links (extra cost). Ignored for **`use_rss: true`** sources. On failure, falls back to the usual heuristic ordering. |
 | `--max-articles` | int | `15` | Max articles to process per source (pipeline cap). |
 | `--timeout` | float | `30.0` | HTTP client timeout (seconds). |
 | `--content-max-chars` | int | `12000` | Max article body characters sent to the LLM. |
-| `-v` / `--verbose` | flag | off | Sets logging to **INFO** on stderr (otherwise WARNING). |
+| `-v` / `--verbose` | flag | off | Sets logging to **INFO** on stderr (otherwise WARNING). Use **`ingest -v --html-discovery-llm`** to see **INFO** lines from the **`news_manager.html_discovery`** logger (candidate counts, LLM timing, fallback warnings). For full candidate tables and raw-parse snippets, run the process with the **`news_manager.html_discovery`** logger at **DEBUG** (e.g. your own `logging` config). |
 
 **Stdout/stderr:** Pipeline progress and errors follow `news_manager` logging and `run_report` behavior (see README / pipeline code).
 

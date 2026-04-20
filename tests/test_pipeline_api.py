@@ -88,6 +88,41 @@ def test_pipeline_run_start_202_and_params_mapped(
     assert params.max_articles == 3
     assert params.timeout == 12.5
     assert params.content_max_chars == 9000
+    assert params.reprocess is False
+    assert params.html_discovery_llm is False
+
+
+@patch("news_manager.resolve_app.start_pipeline_job")
+def test_pipeline_run_start_accepts_html_discovery_llm(
+    mock_start_job: Any, jwt_secret: str
+) -> None:
+    mock_start_job.return_value = {"job_id": "job-456", "status": "queued"}
+    c = _new_client()
+    headers = _authed_headers(jwt_secret, sub="user-123")
+
+    r = c.post(
+        "/api/pipeline/run",
+        json={"html_discovery_llm": True},
+        headers=headers,
+    )
+
+    assert r.status_code == 202
+    params = mock_start_job.call_args.kwargs["params"]
+    assert params.html_discovery_llm is True
+
+
+def test_pipeline_run_start_400_html_discovery_llm_not_boolean(jwt_secret: str) -> None:
+    c = _new_client()
+    headers = _authed_headers(jwt_secret, sub="user-123")
+    r = c.post(
+        "/api/pipeline/run",
+        json={"html_discovery_llm": "yes"},
+        headers=headers,
+    )
+    assert r.status_code == 400
+    payload = r.get_json()
+    assert payload["ok"] is False
+    assert "html_discovery_llm" in payload["message"]
 
 
 def test_pipeline_run_start_forbidden_user_mismatch(jwt_secret: str) -> None:

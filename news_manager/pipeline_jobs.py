@@ -27,6 +27,7 @@ class PipelineRunParams:
     timeout: float
     content_max_chars: int
     reprocess: bool = False
+    html_discovery_llm: bool = False
 
     def to_json_dict(self) -> dict[str, Any]:
         return {
@@ -37,6 +38,7 @@ class PipelineRunParams:
             "timeout": self.timeout,
             "content_max_chars": self.content_max_chars,
             "reprocess": self.reprocess,
+            "html_discovery_llm": self.html_discovery_llm,
         }
 
 
@@ -98,6 +100,7 @@ def _run_job(
             category_selector=params.category,
             source_selector=params.source,
             reprocess=params.reprocess,
+            html_discovery_llm=params.html_discovery_llm,
         )
         payload = results.article_decisions
     except Exception as e:

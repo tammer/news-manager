@@ -10,7 +10,12 @@ SourceKind = Literal["html", "rss"]
 
 @dataclass(frozen=True)
 class Source:
-    """One source entry: homepage (HTML) or RSS/Atom feed URL."""
+    """
+    One source entry: URL for discovery (HTML homepage, RSS/Atom, or XML sitemap).
+
+    ``kind`` is a legacy hint: ``rss`` means force XML listing (RSS/Atom/sitemap only);
+    ``html`` means auto-detect (RSS entries, sitemap ``<loc>``, or HTML link crawl).
+    """
 
     url: str
     kind: SourceKind = "html"
@@ -22,7 +27,12 @@ class Source:
 
 @dataclass(frozen=True)
 class IngestSource:
-    """One row from Supabase ``sources`` (v2 ingest)."""
+    """
+    One row from Supabase ``sources`` (v2 ingest).
+
+    ``use_rss``: when ``True``, discovery treats the URL as **feed/XML only** (RSS/Atom
+    or URL sitemap). When ``False``, **auto-detect** from the response (RSS, sitemap, or HTML).
+    """
 
     url: str
     category_id: str

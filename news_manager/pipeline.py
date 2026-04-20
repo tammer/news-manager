@@ -303,6 +303,7 @@ def run_pipeline_from_db(
     category_selector: str | None = None,
     source_selector: str | None = None,
     reprocess: bool = False,
+    html_discovery_llm: bool = False,
 ) -> PipelineDbRunResult:
     """
     For each user that has sources, load category names and instructions from Supabase.
@@ -410,8 +411,23 @@ def run_pipeline_from_db(
                 }
                 if jar is not None:
                     client_kw["cookies"] = jar
+                use_llm_html = html_discovery_llm and not ing.use_rss
+                logger.info(
+                    "Pipeline discover: user=%s source_id=%s host=%s force_feed_xml=%s "
+                    "html_discovery_llm=%s",
+                    user_id,
+                    source_id,
+                    source_label,
+                    ing.use_rss,
+                    use_llm_html,
+                )
                 with httpx.Client(**client_kw) as client:
-                    targets = discover_article_targets(client, src.url, kind=src.kind)
+                    targets = discover_article_targets(
+                        client,
+                        src.url,
+                        force_feed_xml=ing.use_rss,
+                        use_llm_for_html=use_llm_html,
+                    )
                     successes = 0
                     for url, feed_date, feed_title in targets:
                         if successes >= max_articles:

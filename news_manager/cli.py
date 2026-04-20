@@ -62,6 +62,7 @@ def _cmd_ingest(args: argparse.Namespace) -> int:
             category_selector=args.category,
             source_selector=args.source,
             reprocess=args.reprocess,
+            html_discovery_llm=args.html_discovery_llm,
         )
     except RuntimeError as e:
         print(str(e), file=sys.stderr)
@@ -183,6 +184,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Delete cached news_articles / news_article_exclusions rows and "
             "re-fetch + LLM for those URLs."
+        ),
+    )
+    ingest.add_argument(
+        "--html-discovery-llm",
+        action="store_true",
+        help=(
+            "For HTML (non-RSS) sources, use Groq to pick article URLs from homepage links "
+            "(extra API calls; requires GROQ_API_KEY). See GROQ_MODEL_HTML_DISCOVERY / "
+            "HTML_DISCOVERY_MAX_CANDIDATES in docs."
         ),
     )
     ingest.add_argument(

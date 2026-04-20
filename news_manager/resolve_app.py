@@ -152,6 +152,10 @@ def _parse_pipeline_run_request(
     if not isinstance(reprocess, bool):
         return None, _json_error("'reprocess' must be a boolean.", status=400)
 
+    html_discovery_llm = body.get("html_discovery_llm", False)
+    if not isinstance(html_discovery_llm, bool):
+        return None, _json_error("'html_discovery_llm' must be a boolean.", status=400)
+
     return (
         PipelineRunParams(
             user_id=auth_user_id,
@@ -161,6 +165,7 @@ def _parse_pipeline_run_request(
             timeout=float(timeout),
             content_max_chars=content_max_chars,
             reprocess=reprocess,
+            html_discovery_llm=html_discovery_llm,
         ),
         None,
     )

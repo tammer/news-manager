@@ -36,12 +36,12 @@ def test_parse_feed_entries_atom() -> None:
 
 
 @patch("news_manager.fetch.fetch_html")
-@patch("news_manager.fetch.fetch_feed_xml")
+@patch("news_manager.fetch.fetch_listing_body")
 def test_fetch_articles_for_source_rss_uses_feed_then_html(
-    mock_feed: MagicMock,
+    mock_listing: MagicMock,
     mock_html: MagicMock,
 ) -> None:
-    mock_feed.return_value = RSS_MINIMAL
+    mock_listing.return_value = RSS_MINIMAL
     article_html = (
         "<html><head><title>T</title></head><body><p>"
         + ("word " * 200)
@@ -57,5 +57,5 @@ def test_fetch_articles_for_source_rss_uses_feed_then_html(
     )
     assert len(out) == 1
     assert out[0].url == "https://example.com/a/post"
-    mock_feed.assert_called_once()
+    mock_listing.assert_called_once()
     mock_html.assert_called()

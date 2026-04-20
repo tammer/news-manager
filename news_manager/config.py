@@ -12,6 +12,7 @@ DEFAULT_MAX_ARTICLES = 15
 DEFAULT_HTTP_TIMEOUT = 30.0
 # Max characters of article body sent to the LLM (plan: document truncation)
 DEFAULT_CONTENT_MAX_CHARS = 12000
+DEFAULT_HTML_DISCOVERY_MAX_CANDIDATES = 200
 
 
 def load_dotenv_if_present() -> None:
@@ -30,6 +31,24 @@ def groq_api_key() -> str:
 
 def groq_model() -> str:
     return os.environ.get("GROQ_MODEL", DEFAULT_GROQ_MODEL).strip() or DEFAULT_GROQ_MODEL
+
+
+def groq_model_html_discovery() -> str:
+    """Optional smaller/cheaper model for homepage link picking; falls back to ``groq_model()``."""
+    m = os.environ.get("GROQ_MODEL_HTML_DISCOVERY", "").strip()
+    return m or groq_model()
+
+
+def html_discovery_max_candidates() -> int:
+    """Max homepage links sent to the HTML-discovery LLM (document order, capped)."""
+    raw = os.environ.get("HTML_DISCOVERY_MAX_CANDIDATES", "").strip()
+    if not raw:
+        return DEFAULT_HTML_DISCOVERY_MAX_CANDIDATES
+    try:
+        n = int(raw)
+        return max(1, min(n, 500))
+    except ValueError:
+        return DEFAULT_HTML_DISCOVERY_MAX_CANDIDATES
 
 
 def supabase_url_base() -> str | None:

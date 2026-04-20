@@ -1,8 +1,8 @@
 # news-manager
 
-Fetches configured sources (HTML homepages or **RSS/Atom feeds**) from Supabase, discovers article URLs, filters and summarizes articles using category instructions, and syncs results back to Supabase via the **Groq** API (OpenAI-compatible).
+Fetches configured sources from Supabase (homepage, **RSS/Atom**, or **XML sitemap** URLs), discovers article URLs with a **single GET** per source (**auto-detect** when `use_rss` is false), filters and summarizes articles using category instructions, and syncs results back to Supabase via the **Groq** API (OpenAI-compatible).
 
-Use **RSS feeds** for sites that load listings with JavaScript (for example **Substack**: `https://<publication>.substack.com/feed` instead of the homepage).
+Use **`use_rss: true`** to **force** feed/XML discovery only (RSS, Atom, or a `urlset` sitemap). With **`use_rss: false`**, the same URL can be a homepage, feed, or sitemap—ingest picks RSS entries, sitemap `<loc>` URLs, or HTML links in that order. For JS-heavy sites you can still point at a feed URL (for example **Substack**: `https://<publication>.substack.com/feed`).
 
 ### Subscriber cookies (paywalled sites)
 
@@ -118,7 +118,7 @@ On success, import prints a **one-line summary** to stderr (`categories_created`
 ```
 
 - **`email`** on export is optional metadata (echo of the `--email` flag).
-- Each **`sources`** entry must include **`url`** (non-empty string) and **`use_rss`** (boolean).
+- Each **`sources`** entry must include **`url`** (non-empty string) and **`use_rss`** (boolean: **`false`** = auto listing sniff; **`true`** = force RSS/Atom or sitemap on that URL only).
 
 From Python (for example after creating a user), reuse **`import_user_sources_catalog`** from **`news_manager.user_sources_catalog`** with **`create_supabase_client()`** and the new user’s UUID.
 

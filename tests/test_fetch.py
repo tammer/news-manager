@@ -1,9 +1,70 @@
 """Fetch and link extraction tests."""
 
 import httpx
+import pytest
 from unittest.mock import MagicMock, patch
 
-from news_manager.fetch import extract_article_urls, fetch_articles_for_source, fetch_html
+from news_manager.fetch import (
+    discover_article_targets,
+    extract_article_link_candidates,
+    extract_article_urls,
+    extract_sitemap_http_urls,
+    fetch_articles_for_source,
+    fetch_html,
+)
+
+
+SITEMAP_NEWS = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://example.com/news/good-story</loc></url>
+  <url><loc>https://example.com/tag/bad</loc></url>
+  <url><loc>https://evil.com/other</loc></url>
+</urlset>
+"""
+
+
+def test_extract_sitemap_http_urls_same_site_and_path_rules() -> None:
+    urls = extract_sitemap_http_urls(SITEMAP_NEWS, "https://example.com/")
+    assert urls == ["https://example.com/news/good-story"]
+
+
+def test_discover_article_targets_auto_sitemap(monkeypatch: pytest.MonkeyPatch) -> None:
+    import news_manager.fetch as fetch_mod
+
+    def fake_listing(_client: object, url: str) -> str | None:
+        assert "example.com" in url
+        return SITEMAP_NEWS
+
+    monkeypatch.setattr(fetch_mod, "fetch_listing_body", fake_listing)
+    client = MagicMock()
+    out = discover_article_targets(client, "https://example.com/", force_feed_xml=False)
+    assert [t[0] for t in out] == ["https://example.com/news/good-story"]
+
+
+def test_discover_article_targets_force_feed_sitemap(monkeypatch: pytest.MonkeyPatch) -> None:
+    import news_manager.fetch as fetch_mod
+
+    monkeypatch.setattr(fetch_mod, "fetch_listing_body", lambda _c, _u: SITEMAP_NEWS)
+    client = MagicMock()
+    out = discover_article_targets(client, "https://example.com/", force_feed_xml=True)
+    assert [t[0] for t in out] == ["https://example.com/news/good-story"]
+
+
+def test_extract_article_link_candidates_first_anchor_wins() -> None:
+    html = """
+    <html><body>
+    <a href="/story">First</a>
+    <a href="/story">Second ignored</a>
+    <a href="/other">Other</a>
+    </body></html>
+    """
+    home = "https://www.example.com/"
+    cands = extract_article_link_candidates(html, home)
+    urls = [u for u, _ in cands]
+    assert urls.count("https://www.example.com/story") == 1
+    by_url = dict(cands)
+    assert by_url["https://www.example.com/story"] == "First"
+    assert by_url["https://www.example.com/other"] == "Other"
 
 
 def test_extract_article_urls_same_site() -> None:
@@ -22,7 +83,11 @@ def test_extract_article_urls_same_site() -> None:
 
 
 @patch("news_manager.fetch.fetch_html")
-def test_fetch_articles_for_source_respects_cap(mock_fetch: MagicMock) -> None:
+@patch("news_manager.fetch.fetch_listing_body")
+def test_fetch_articles_for_source_respects_cap(
+    mock_listing: MagicMock,
+    mock_fetch: MagicMock,
+) -> None:
     """Returns up to max_articles when HTML repeats article links."""
     article_html = "<html><title>T</title><body><p>" + ("word " * 200) + "</p></body></html>"
     home_html = """
@@ -33,12 +98,8 @@ def test_fetch_articles_for_source_respects_cap(mock_fetch: MagicMock) -> None:
     </body></html>
     """
 
-    def side_effect(client: object, url: str) -> str | None:
-        if url.rstrip("/") == "https://example.com":
-            return home_html
-        return article_html
-
-    mock_fetch.side_effect = side_effect
+    mock_listing.return_value = home_html
+    mock_fetch.return_value = article_html
     out = fetch_articles_for_source("example.com", max_articles=2, timeout=5.0)
     assert len(out) == 2
 
@@ -80,6 +141,51 @@ def test_fetch_html_429_fallback_backoff(mock_sleep: MagicMock) -> None:
     assert client.get.call_count == 3
     assert mock_sleep.call_args_list[0][0][0] == 20.0
     assert mock_sleep.call_args_list[1][0][0] == 40.0
+
+
+@patch("news_manager.html_discovery_llm.select_article_urls_with_llm")
+@patch("news_manager.fetch.fetch_listing_body")
+def test_discover_article_targets_html_llm_uses_model_order(
+    mock_listing_body: MagicMock,
+    mock_llm_pick: MagicMock,
+) -> None:
+    home_html = """
+    <html><body>
+    <a href="/a/1">One</a>
+    <a href="/a/2">Two</a>
+    </body></html>
+    """
+    mock_listing_body.return_value = home_html
+    mock_llm_pick.return_value = ["https://example.com/a/2", "https://example.com/a/1"]
+    client = MagicMock()
+    out = discover_article_targets(
+        client, "https://example.com", use_llm_for_html=True, force_feed_xml=False
+    )
+    assert out == [
+        ("https://example.com/a/2", None, None),
+        ("https://example.com/a/1", None, None),
+    ]
+    mock_llm_pick.assert_called_once()
+
+
+@patch("news_manager.html_discovery_llm.select_article_urls_with_llm")
+@patch("news_manager.fetch.fetch_listing_body")
+def test_discover_article_targets_html_llm_falls_back_when_empty(
+    mock_listing_body: MagicMock,
+    mock_llm_pick: MagicMock,
+) -> None:
+    home_html = """<html><body><a href="/z/short">S</a><a href="/longer/path/here">L</a></body></html>"""
+    mock_listing_body.return_value = home_html
+    mock_llm_pick.return_value = []
+    client = MagicMock()
+    out = discover_article_targets(
+        client, "https://example.com", use_llm_for_html=True, force_feed_xml=False
+    )
+    # Heuristic: longer path first
+    assert [t[0] for t in out] == [
+        "https://example.com/longer/path/here",
+        "https://example.com/z/short",
+    ]
 
 
 @patch("news_manager.fetch.time.sleep")

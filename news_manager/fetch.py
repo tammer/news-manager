@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Literal
@@ -16,6 +17,7 @@ import trafilatura
 from bs4 import BeautifulSoup
 from trafilatura import extract_metadata
 
+from news_manager.config import groq_model_html_discovery
 from news_manager.models import RawArticle
 
 logger = logging.getLogger(__name__)
@@ -168,11 +170,29 @@ def _path_looks_like_article(path: str) -> bool:
     return True
 
 
-def extract_article_urls(html: str, home_url: str) -> list[str]:
-    """Parse HTML for same-site links that may be articles."""
+_ANCHOR_TEXT_MAX_CHARS = 120
+
+
+def _compact_anchor_text(tag) -> str:
+    """Visible anchor text for LLM context (single line, bounded length)."""
+    try:
+        raw = tag.get_text(separator=" ", strip=True)
+    except (AttributeError, TypeError):
+        return ""
+    one = " ".join(str(raw).split()).strip()
+    if len(one) <= _ANCHOR_TEXT_MAX_CHARS:
+        return one
+    return one[: _ANCHOR_TEXT_MAX_CHARS - 3] + "..."
+
+
+def extract_article_link_candidates(html: str, home_url: str) -> list[tuple[str, str]]:
+    """
+    Same-site article-like links in document order: ``(absolute_url, anchor_text)``.
+    First occurrence wins per URL (anchor text from the first ``<a>``).
+    """
     soup = BeautifulSoup(html, "lxml")
     seen: set[str] = set()
-    out: list[str] = []
+    out: list[tuple[str, str]] = []
     for a in soup.find_all("a", href=True):
         href = a.get("href")
         if not href or not isinstance(href, str):
@@ -194,8 +214,13 @@ def extract_article_urls(html: str, home_url: str) -> list[str]:
         if not _path_looks_like_article(p.path):
             continue
         seen.add(abs_url)
-        out.append(abs_url)
+        out.append((abs_url, _compact_anchor_text(a)))
     return out
+
+
+def extract_article_urls(html: str, home_url: str) -> list[str]:
+    """Parse HTML for same-site links that may be articles."""
+    return [u for u, _ in extract_article_link_candidates(html, home_url)]
 
 
 def _extract_body_title_date(html: str, url: str) -> tuple[str, str | None, str]:
@@ -305,25 +330,230 @@ def parse_feed_entries(body: str) -> list[tuple[str, str | None, str | None]]:
     return out
 
 
+def _xml_local_name(tag: str) -> str:
+    if not tag:
+        return ""
+    if "}" in tag:
+        return tag.rsplit("}", 1)[-1]
+    return tag
+
+
+def _looks_like_sitemap_index(text: str) -> bool:
+    s = text.lstrip()[:24_000]
+    return bool(re.search(r"<\s*sitemapindex\b", s, re.I))
+
+
+def _looks_like_sitemap_urlset(text: str) -> bool:
+    """True for a URL sitemap (not a sitemap index document)."""
+    s = text.lstrip()[:24_000]
+    if _looks_like_sitemap_index(text):
+        return False
+    return bool(re.search(r"<\s*urlset\b", s, re.I))
+
+
+def extract_sitemap_http_urls(body: str, home_url: str) -> list[str]:
+    """
+    Collect ``http(s)`` URLs from ``<loc>`` under ``<urlset>`` (Sitemap 0.9).
+    Same-site and path heuristics as HTML link discovery. Document order, deduped.
+    """
+    if not body.strip():
+        return []
+    try:
+        root = ET.fromstring(body)
+    except ET.ParseError as e:
+        logger.warning("discovery: sitemap XML parse error for %s: %s", home_url, e)
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for el in root.iter():
+        if _xml_local_name(el.tag) != "loc":
+            continue
+        raw = (el.text or "").strip()
+        if not raw.startswith(("http://", "https://")):
+            continue
+        p = urlparse(raw)
+        if p.scheme not in ("http", "https"):
+            continue
+        nu = normalize_url(urlunparse(p._replace(fragment="")))
+        if nu in seen:
+            continue
+        if not same_site(home_url, nu):
+            continue
+        if not _path_looks_like_article(p.path):
+            continue
+        seen.add(nu)
+        out.append(nu)
+    return out
+
+
+def fetch_listing_body(client: httpx.Client, url: str) -> str | None:
+    """
+    GET ``url`` once for discovery sniffing (RSS/Atom, URL sitemap, or HTML).
+
+    Accepts typical feed XML, sitemap XML, and HTML listing pages; rejects ambiguous
+    non-listing bodies with a warning.
+    """
+    try:
+        r = _get_with_429_retry(client, url)
+        r.raise_for_status()
+        text = r.text
+        if not text or not text.strip():
+            return None
+        ctype = (r.headers.get("content-type") or "").lower()
+        if any(x in ctype for x in ("xml", "rss", "atom", "rdf")):
+            return text
+        if _looks_like_feed_xml(text):
+            return text
+        if _looks_like_sitemap_index(text) or _looks_like_sitemap_urlset(text):
+            return text
+        if _response_ok_for_article_html(ctype, text[:2000]):
+            return text
+        logger.warning(
+            "discovery: could not classify listing response url=%s content-type=%s",
+            url,
+            ctype or "(none)",
+        )
+        return None
+    except httpx.HTTPError as e:
+        logger.warning("discovery: HTTP error fetching listing %s: %s", url, e)
+        return None
+
+
 def discover_article_targets(
     client: httpx.Client,
     home_raw: str,
     *,
-    kind: Literal["html", "rss"] = "html",
+    force_feed_xml: bool = False,
+    use_llm_for_html: bool = False,
 ) -> list[tuple[str, str | None, str | None]]:
     """
-    List candidate article URLs in crawl order (RSS feed order or HTML link order).
-    Does not fetch individual article bodies.
+    List candidate article URLs in crawl order.
+
+    **Auto** (``force_feed_xml=False``): one GET, then RSS/Atom entries if present,
+    else URL sitemap ``<loc>`` URLs, else same-site HTML links (optional LLM ordering).
+
+    **Force feed/XML** (``force_feed_xml=True``): same GET, then RSS/Atom or sitemap
+    only (no HTML link crawl). Matches legacy ``use_rss=true`` sources.
     """
+    disc_log = logging.getLogger("news_manager.html_discovery")
     home_url = normalize_url(home_raw)
-    if kind == "rss":
-        feed_body = fetch_feed_xml(client, home_url)
-        if not feed_body:
-            return []
-        return parse_feed_entries(feed_body)
-    home_html = fetch_html(client, home_url)
-    if not home_html:
+    host = urlparse(home_url).hostname or ""
+
+    body = fetch_listing_body(client, home_url)
+    if not body:
+        logger.info("discovery: no listing body host=%s force_feed_xml=%s", host, force_feed_xml)
         return []
+
+    if force_feed_xml:
+        feed_rows = parse_feed_entries(body)
+        if feed_rows:
+            logger.info(
+                "discovery: strategy=rss_atom host=%s force_feed_xml=True count=%s",
+                host,
+                len(feed_rows),
+            )
+            return feed_rows
+        if _looks_like_sitemap_index(body):
+            logger.info(
+                "discovery: strategy=sitemap_index_unsupported host=%s force_feed_xml=True",
+                host,
+            )
+            return []
+        if _looks_like_sitemap_urlset(body):
+            locs = extract_sitemap_http_urls(body, home_url)
+            if locs:
+                logger.info(
+                    "discovery: strategy=sitemap host=%s force_feed_xml=True count=%s",
+                    host,
+                    len(locs),
+                )
+                return [(u, None, None) for u in locs]
+        logger.warning(
+            "discovery: force_feed_xml but no RSS entries or urlset locs host=%s",
+            host,
+        )
+        return []
+
+    if _looks_like_sitemap_index(body):
+        logger.info(
+            "discovery: strategy=sitemap_index_unsupported host=%s force_feed_xml=False",
+            host,
+        )
+        return []
+    if _looks_like_sitemap_urlset(body):
+        locs = extract_sitemap_http_urls(body, home_url)
+        if locs:
+            logger.info(
+                "discovery: strategy=sitemap host=%s force_feed_xml=False count=%s",
+                host,
+                len(locs),
+            )
+            return [(u, None, None) for u in locs]
+    feed_rows = parse_feed_entries(body)
+    if feed_rows:
+        logger.info(
+            "discovery: strategy=rss_atom host=%s force_feed_xml=False count=%s",
+            host,
+            len(feed_rows),
+        )
+        return feed_rows
+
+    home_html = body
+
+    if use_llm_for_html:
+        candidates = extract_article_link_candidates(home_html, home_url)
+        disc_log.info(
+            "discover_article_targets: html_llm host=%s candidate_count=%s model=%s",
+            host,
+            len(candidates),
+            groq_model_html_discovery(),
+        )
+        sample = [u for u, _ in candidates[:5]]
+        disc_log.info(
+            "discover_article_targets: sample_candidate_urls host=%s first_up_to_5=%s",
+            host,
+            sample,
+        )
+        if disc_log.isEnabledFor(logging.DEBUG):
+            cap_dbg = min(len(candidates), 500)
+            lines = [f"{u}\t{t}" for u, t in candidates[:cap_dbg]]
+            disc_log.debug(
+                "discover_article_targets: candidate_tsv host=%s lines=%s\n%s",
+                host,
+                cap_dbg,
+                "\n".join(lines),
+            )
+
+        if not candidates:
+            disc_log.info(
+                "discover_article_targets: no candidates after parse host=%s",
+                host,
+            )
+            return []
+
+        from news_manager.html_discovery_llm import select_article_urls_with_llm
+
+        picked = select_article_urls_with_llm(
+            home_url, candidates, home_host=host or None
+        )
+        if picked is not None and len(picked) > 0:
+            disc_log.info(
+                "discover_article_targets: using_llm_order host=%s target_count=%s",
+                host,
+                len(picked),
+            )
+            return [(u, None, None) for u in picked]
+
+        disc_log.warning(
+            "discover_article_targets: llm_empty_or_failed heuristic_fallback host=%s "
+            "candidate_count=%s",
+            host,
+            len(candidates),
+        )
+        urls = [u for u, _ in candidates]
+        urls.sort(key=lambda u: len(urlparse(u).path), reverse=True)
+        return [(u, None, None) for u in urls]
+
     links = extract_article_urls(home_html, home_url)
     links.sort(key=lambda u: len(urlparse(u).path), reverse=True)
     return [(u, None, None) for u in links]
@@ -384,8 +614,11 @@ def fetch_articles_for_source(
     timeout: float,
 ) -> list[RawArticle]:
     """
-    HTML: fetch home page, discover same-site links, fetch each article.
-    RSS: fetch Atom/RSS feed (e.g. Substack `/feed`), then fetch each entry URL.
+    Discover article URLs then fetch each page.
+
+    ``kind="rss"`` forces feed/XML discovery (RSS/Atom or URL sitemap). ``kind="html"``
+    uses auto-detect (RSS, sitemap, or HTML link crawl). See ``discover_article_targets``.
+
     Failures are logged; returns whatever could be fetched.
     Uses ``cookies/<host>.json`` when present (see thestar_plan.md).
     """
@@ -402,17 +635,10 @@ def fetch_articles_for_source(
     if jar is not None:
         client_kw["cookies"] = jar
     with httpx.Client(**client_kw) as client:
-        if kind == "rss":
-            feed_body = fetch_feed_xml(client, home_url)
-            if not feed_body:
-                return []
-            entries = parse_feed_entries(feed_body)
-            return _fetch_raw_articles_from_urls(client, entries, max_articles=max_articles)
-
-        home_html = fetch_html(client, home_url)
-        if not home_html:
-            return []
-        links = extract_article_urls(home_html, home_url)
-        links.sort(key=lambda u: len(urlparse(u).path), reverse=True)
-        tuples = [(u, None, None) for u in links]
-        return _fetch_raw_articles_from_urls(client, tuples, max_articles=max_articles)
+        targets = discover_article_targets(
+            client,
+            home_url,
+            force_feed_xml=(kind == "rss"),
+            use_llm_for_html=False,
+        )
+        return _fetch_raw_articles_from_urls(client, targets, max_articles=max_articles)

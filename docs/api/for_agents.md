@@ -72,7 +72,7 @@ Supported **`OPTIONS`** paths:
 | `website_title` | string | Human-readable site title. |
 | `homepage_url` | string | Canonical homepage URL. |
 | `resolved_url` | string | URL to store as a source (feed or HTML listing). |
-| `use_rss` | boolean | Whether ingest should treat `resolved_url` as RSS/Atom. |
+| `use_rss` | boolean | Hint for **`sources.use_rss`**: **`true`** = force feed/XML discovery only; **`false`** = auto-detect (RSS, sitemap, or HTML) on ingest. |
 | `rss_found` | boolean | Whether any feed was discovered. |
 | `confidence` | string | Often `"high"`, `"medium"`, or `"low"`. |
 | `notes` | string | Free-text explanation. |
@@ -139,6 +139,8 @@ Each source:
 | `url` | string | **yes** (non-empty) |
 | `use_rss` | boolean | **yes** |
 
+**`use_rss` on each source:** **`false`** = **auto** listing (one GET → RSS/Atom entries, else sitemap **`urlset`** `<loc>` URLs, else HTML links). **`true`** = **force** RSS/Atom or sitemap on that URL only (no HTML crawl). Sitemap index URLs are not expanded.
+
 **Semantics:** Existing category by **`(user_id, name)`** → reuse row, do not change instruction. Existing source URL for that user (**normalized** URL, any category) → skip insert.
 
 **Success:** **200**
@@ -185,6 +187,9 @@ Each source:
 | `timeout` | number | no | `30` | HTTP client timeout (seconds). |
 | `content_max_chars` | integer | no | `12000` | Max article body chars sent to LLM. |
 | `reprocess` | boolean | no | `false` | If true, pipeline may clear cached rows and reprocess (see pipeline implementation). |
+| `html_discovery_llm` | boolean | no | `false` | If **`true`**, when **auto** discovery uses an **HTML** listing, run the extra Groq step to pick article links from anchors (ignored when **`use_rss: true`** on that source). Invalid model output falls back to heuristics. Same env tuning as CLI: **`GROQ_MODEL_HTML_DISCOVERY`**, **`HTML_DISCOVERY_MAX_CANDIDATES`**. |
+
+**Logging:** With server logging at **INFO**, look for **`discovery:`** lines, **`news_manager.html_discovery`**, and **`Pipeline discover:`** (`force_feed_xml=…`) from **`news_manager.pipeline`** during jobs.
 
 **Success:** **202 Accepted**
 
@@ -223,7 +228,7 @@ Each source:
 | `status` | string | `"queued"` \| `"running"` \| `"succeeded"` \| `"failed"` |
 | `started_at` | string \| null | ISO timestamp or null. |
 | `finished_at` | string \| null | ISO timestamp or null. |
-| `params` | object | Echo of run parameters (`user_id`, `category`, `source`, `max_articles`, `timeout`, `content_max_chars`, `reprocess`). |
+| `params` | object | Echo of run parameters (`user_id`, `category`, `source`, `max_articles`, `timeout`, `content_max_chars`, `reprocess`, `html_discovery_llm`). |
 | `result` | array \| null | On success, list of article decision dicts (pipeline-specific). |
 | `error` | string \| null | On failure, error message string. |
 
