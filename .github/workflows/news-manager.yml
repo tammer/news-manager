@@ -50,4 +50,4 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           # Optional: set repository variable GROQ_MODEL (Settings → Variables) to override model
           GROQ_MODEL: ${{ vars.GROQ_MODEL }}
-        run: news-manager --from-db -v
+        run: news-manager --from-db --verbosity 2
