@@ -1,36 +1,66 @@
-"""Structured stdout lines for pipeline progress (cache_change_plan.md)."""
+"""Human-readable ingest progress output with verbosity levels."""
 
 from __future__ import annotations
 
-from typing import Literal
-
-_Result = Literal["included", "excluded"]
-
-
-def report_already_in_articles(url: str) -> None:
-    print(url)
-    print("Already in database")
+from dataclasses import dataclass
+from datetime import datetime, timezone
 
 
-def report_already_excluded(url: str) -> None:
-    print(url)
-    print("Already excluded")
+@dataclass(frozen=True)
+class SourceSummary:
+    processed: int = 0
+    included: int = 0
+    rejected: int = 0
 
 
-def report_processed(
-    url: str,
-    category: str,
-    ok: bool,
-    detail: str = "",
+def _emit(verbosity: int, level: int, message: str) -> None:
+    if verbosity >= level:
+        print(message)
+
+
+def report_start(*, verbosity: int) -> None:
+    started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    _emit(verbosity, 1, f"Starting at: {started_at}")
+
+
+def report_user(*, verbosity: int, user_id: str) -> None:
+    _emit(verbosity, 2, f"Processing user: {user_id}")
+
+
+def report_category(*, verbosity: int, category: str) -> None:
+    _emit(verbosity, 1, f"\nProcessing category: {category}")
+
+
+def report_source(*, verbosity: int, source: str) -> None:
+    _emit(verbosity, 1, f"Processing source: {source}")
+
+
+def report_article(*, verbosity: int, url: str) -> None:
+    _emit(verbosity, 1, f"Processing article: {url}")
+
+
+def report_decision(
     *,
-    result: _Result | None = None,
+    verbosity: int,
+    included: bool,
+    reason: str,
 ) -> None:
-    print(url)
-    print(category)
-    if ok:
-        if result is not None:
-            print(f"success {result}")
-        else:
-            print("success")
-    else:
-        print(f"failure: {detail}" if detail else "failure")
+    decision = "Include" if included else "Exclude"
+    _emit(verbosity, 1, f"Decision: {decision} because: {reason}")
+
+
+def report_source_summary(
+    *,
+    verbosity: int,
+    category: str,
+    source: str,
+    index_url: str,
+    summary: SourceSummary,
+) -> None:
+    if verbosity < 1:
+        return
+    print(f"\nSummary for category/source: {category} / {source}")
+    print(f"Index URL: {index_url}")
+    print(f"Processed {summary.processed} articles")
+    print(f"Included {summary.included} articles")
+    print(f"Rejected {summary.rejected} articles")

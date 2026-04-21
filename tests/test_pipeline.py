@@ -493,6 +493,98 @@ def test_run_pipeline_cached_excluded_uses_stored_why(
     assert result.article_decisions[0]["reason"] == why
 
 
+@patch("news_manager.pipeline.filter_and_summarize_outcome")
+@patch("news_manager.pipeline.fetch_single_raw_article")
+@patch("news_manager.pipeline.discover_article_targets")
+@patch("news_manager.pipeline.prefetch_processed_urls_v2")
+@patch("news_manager.pipeline.fetch_sources_with_categories")
+@patch("news_manager.pipeline.list_user_ids_with_sources")
+def test_run_pipeline_verbosity_zero_is_silent(
+    mock_list_users: MagicMock,
+    mock_sources: MagicMock,
+    mock_prefetch: MagicMock,
+    mock_discover: MagicMock,
+    mock_fetch_one: MagicMock,
+    mock_outcome: MagicMock,
+    capsys,
+) -> None:
+    mock_list_users.return_value = ["user-1"]
+    mock_sources.return_value = [
+        {
+            "source_id": "sid-1",
+            "url": "https://a.com",
+            "use_rss": False,
+            "category_id": "cid-1",
+            "category_name": "News",
+            "category_instruction": "",
+        }
+    ]
+    mock_prefetch.return_value = ({normalize_url("https://u"): "Already in database"}, {})
+    mock_discover.return_value = [("https://u", None, None)]
+    mock_fetch_one.return_value = None
+    mock_outcome.return_value = SummarizeOutcome(output=None, outcome="error", why=None)
+
+    run_pipeline_from_db(
+        supabase_client=MagicMock(),
+        max_articles=5,
+        http_timeout=1.0,
+        verbosity=0,
+    )
+    captured = capsys.readouterr()
+    assert captured.out == ""
+
+
+@patch("news_manager.pipeline.filter_and_summarize_outcome")
+@patch("news_manager.pipeline.fetch_single_raw_article")
+@patch("news_manager.pipeline.discover_article_targets")
+@patch("news_manager.pipeline.prefetch_processed_urls_v2")
+@patch("news_manager.pipeline.fetch_sources_with_categories")
+@patch("news_manager.pipeline.list_user_ids_with_sources")
+def test_run_pipeline_verbosity_one_prints_human_readable_progress(
+    mock_list_users: MagicMock,
+    mock_sources: MagicMock,
+    mock_prefetch: MagicMock,
+    mock_discover: MagicMock,
+    mock_fetch_one: MagicMock,
+    mock_outcome: MagicMock,
+    capsys,
+) -> None:
+    mock_list_users.return_value = ["user-1"]
+    mock_sources.return_value = [
+        {
+            "source_id": "sid-1",
+            "url": "https://a.com",
+            "use_rss": False,
+            "category_id": "cid-1",
+            "category_name": "News",
+            "category_instruction": "",
+        }
+    ]
+    mock_prefetch.return_value = ({normalize_url("https://u"): "Already in database"}, {})
+    mock_discover.return_value = [("https://u", None, None)]
+    mock_fetch_one.return_value = None
+    mock_outcome.return_value = SummarizeOutcome(output=None, outcome="error", why=None)
+
+    run_pipeline_from_db(
+        supabase_client=MagicMock(),
+        max_articles=5,
+        http_timeout=1.0,
+        verbosity=1,
+    )
+    captured = capsys.readouterr()
+    out = captured.out
+    assert "Starting at:" in out
+    assert "Processing category: News" in out
+    assert "Processing source: a.com" in out
+    assert "Processing article: https://u" in out
+    assert "Decision: Include because: Already in database" in out
+    assert "Summary for category/source: News / a.com" in out
+    assert "Index URL: https://a.com" in out
+    assert "Processed 1 articles" in out
+    assert "Included 1 articles" in out
+    assert "Rejected 0 articles" in out
+
+
 @patch("news_manager.pipeline.fetch_single_raw_article")
 @patch("news_manager.pipeline.filter_and_summarize_outcome")
 @patch("news_manager.pipeline.fetch_sources_for_category_user")

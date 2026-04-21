@@ -26,9 +26,14 @@ from news_manager.models import (
     UserPipelineResult,
 )
 from news_manager.run_report import (
-    report_already_excluded,
-    report_already_in_articles,
-    report_processed,
+    SourceSummary,
+    report_article,
+    report_category,
+    report_decision,
+    report_source,
+    report_source_summary,
+    report_start,
+    report_user,
 )
 from news_manager.supabase_sync import (
     delete_excluded_url_v2,
@@ -304,6 +309,7 @@ def run_pipeline_from_db(
     source_selector: str | None = None,
     reprocess: bool = False,
     html_discovery_llm: bool = False,
+    verbosity: int = 1,
 ) -> PipelineDbRunResult:
     """
     For each user that has sources, load category names and instructions from Supabase.
@@ -332,8 +338,10 @@ def run_pipeline_from_db(
     if not user_ids:
         return PipelineDbRunResult(users=[], article_decisions=[])
 
+    report_start(verbosity=verbosity)
+
     for user_id in user_ids:
-        print(f"user {user_id}")
+        report_user(verbosity=verbosity, user_id=user_id)
         rows = fetch_sources_with_categories(supabase_client, user_id)
         if category_selector_norm is not None:
             rows = [
@@ -370,6 +378,7 @@ def run_pipeline_from_db(
                     break
             if not category_name:
                 category_name = category_id
+            report_category(verbosity=verbosity, category=category_name)
 
             llm_instructions = ""
             if src_rows:
@@ -399,6 +408,8 @@ def run_pipeline_from_db(
                 )
                 src = ing.to_fetch_source()
                 source_label = source_base_label(ing.url)
+                report_source(verbosity=verbosity, source=source_label)
+                source_summary = SourceSummary()
                 try:
                     jar = cookie_jar_for_source(src)
                 except ValueError as e:
@@ -435,6 +446,7 @@ def run_pipeline_from_db(
                         nu = normalize_url(url)
                         if nu in urls_done_this_category:
                             continue
+                        report_article(verbosity=verbosity, url=nu)
 
                         if nu in db_included:
                             if reprocess:
@@ -445,8 +457,12 @@ def run_pipeline_from_db(
                                     logger.warning("%s", del_err)
                                 db_included.pop(nu, None)
                             else:
-                                report_already_in_articles(nu)
                                 why = db_included.get(nu) or "Already in database"
+                                report_decision(
+                                    verbosity=verbosity,
+                                    included=True,
+                                    reason=why,
+                                )
                                 article_decisions.append(
                                     _public_article_decision(
                                         url=nu,
@@ -461,6 +477,11 @@ def run_pipeline_from_db(
                                 )
                                 urls_done_this_category.add(nu)
                                 successes += 1
+                                source_summary = SourceSummary(
+                                    processed=source_summary.processed + 1,
+                                    included=source_summary.included + 1,
+                                    rejected=source_summary.rejected,
+                                )
                                 continue
                         if nu in db_excluded:
                             if reprocess:
@@ -471,8 +492,12 @@ def run_pipeline_from_db(
                                     logger.warning("%s", del_err)
                                 db_excluded.pop(nu, None)
                             else:
-                                report_already_excluded(nu)
                                 why = db_excluded.get(nu) or "Already excluded"
+                                report_decision(
+                                    verbosity=verbosity,
+                                    included=False,
+                                    reason=why,
+                                )
                                 article_decisions.append(
                                     _public_article_decision(
                                         url=nu,
@@ -487,10 +512,21 @@ def run_pipeline_from_db(
                                 )
                                 urls_done_this_category.add(nu)
                                 successes += 1
+                                source_summary = SourceSummary(
+                                    processed=source_summary.processed + 1,
+                                    included=source_summary.included,
+                                    rejected=source_summary.rejected + 1,
+                                )
                                 continue
 
                         raw = fetch_single_raw_article(client, nu, feed_date, feed_title)
                         if raw is None:
+                            reason = "Could not fetch article"
+                            report_decision(
+                                verbosity=verbosity,
+                                included=False,
+                                reason=reason,
+                            )
                             article_decisions.append(
                                 _public_article_decision(
                                     url=nu,
@@ -500,8 +536,13 @@ def run_pipeline_from_db(
                                     short_summary=None,
                                     full_summary=None,
                                     included=False,
-                                    reason="Could not fetch article",
+                                    reason=reason,
                                 )
+                            )
+                            source_summary = SourceSummary(
+                                processed=source_summary.processed + 1,
+                                included=source_summary.included,
+                                rejected=source_summary.rejected + 1,
                             )
                             continue
                         successes += 1
@@ -526,7 +567,11 @@ def run_pipeline_from_db(
                                 include_why,
                             )
                             if err:
-                                report_processed(nu, category_name, False, err)
+                                report_decision(
+                                    verbosity=verbosity,
+                                    included=False,
+                                    reason=err,
+                                )
                                 article_decisions.append(
                                     _public_article_decision(
                                         url=nu,
@@ -541,8 +586,10 @@ def run_pipeline_from_db(
                                 )
                             else:
                                 bucket.append(outcome.output)
-                                report_processed(
-                                    nu, category_name, True, result="included"
+                                report_decision(
+                                    verbosity=verbosity,
+                                    included=True,
+                                    reason=include_why,
                                 )
                                 db_included[nu] = include_why
                                 article_decisions.append(
@@ -551,6 +598,11 @@ def run_pipeline_from_db(
                                     )
                                 )
                             urls_done_this_category.add(nu)
+                            source_summary = SourceSummary(
+                                processed=source_summary.processed + 1,
+                                included=source_summary.included + (0 if err else 1),
+                                rejected=source_summary.rejected + (1 if err else 0),
+                            )
                         elif outcome.outcome == "excluded":
                             why = outcome.why or "Excluded by filter."
                             err = upsert_excluded_url_v2(
@@ -562,7 +614,11 @@ def run_pipeline_from_db(
                                 why,
                             )
                             if err:
-                                report_processed(nu, category_name, False, err)
+                                report_decision(
+                                    verbosity=verbosity,
+                                    included=False,
+                                    reason=err,
+                                )
                                 article_decisions.append(
                                     _public_article_decision(
                                         url=nu,
@@ -576,8 +632,10 @@ def run_pipeline_from_db(
                                     )
                                 )
                             else:
-                                report_processed(
-                                    nu, category_name, True, result="excluded"
+                                report_decision(
+                                    verbosity=verbosity,
+                                    included=False,
+                                    reason=why,
                                 )
                                 db_excluded[nu] = why
                                 article_decisions.append(
@@ -593,12 +651,17 @@ def run_pipeline_from_db(
                                     )
                                 )
                             urls_done_this_category.add(nu)
+                            source_summary = SourceSummary(
+                                processed=source_summary.processed + 1,
+                                included=source_summary.included,
+                                rejected=source_summary.rejected + 1,
+                            )
                         else:
-                            report_processed(
-                                nu,
-                                category_name,
-                                False,
-                                "LLM or parse error",
+                            reason = "LLM or parse error"
+                            report_decision(
+                                verbosity=verbosity,
+                                included=False,
+                                reason=reason,
                             )
                             article_decisions.append(
                                 _public_article_decision(
@@ -609,9 +672,21 @@ def run_pipeline_from_db(
                                     short_summary=None,
                                     full_summary=None,
                                     included=False,
-                                    reason="LLM or parse error",
+                                    reason=reason,
                                 )
                             )
+                            source_summary = SourceSummary(
+                                processed=source_summary.processed + 1,
+                                included=source_summary.included,
+                                rejected=source_summary.rejected + 1,
+                            )
+                report_source_summary(
+                    verbosity=verbosity,
+                    category=category_name,
+                    source=source_label,
+                    index_url=ing.url,
+                    summary=source_summary,
+                )
 
             cat_results.append(CategoryResult(category=category_name, articles=bucket))
 

@@ -63,6 +63,7 @@ def _cmd_ingest(args: argparse.Namespace) -> int:
             source_selector=args.source,
             reprocess=args.reprocess,
             html_discovery_llm=args.html_discovery_llm,
+            verbosity=args.verbosity,
         )
     except RuntimeError as e:
         print(str(e), file=sys.stderr)
@@ -217,10 +218,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help=f"Max article body chars sent to the LLM (default: {DEFAULT_CONTENT_MAX_CHARS})",
     )
     ingest.add_argument(
-        "-v",
-        "--verbose",
-        action="store_true",
-        help="Log INFO to stderr (e.g. cookie debug lines)",
+        "--verbosity",
+        type=int,
+        choices=(0, 1, 2),
+        default=1,
+        help=(
+            "Ingest output verbosity: 0=silent, 1=human-readable progress "
+            "(default), 2=progress + debug logging."
+        ),
     )
     ingest.set_defaults(_handler=_cmd_ingest)
 
@@ -274,7 +279,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(normalized)
 
     logging.basicConfig(
-        level=logging.INFO if getattr(args, "verbose", False) else logging.WARNING,
+        level=logging.DEBUG if getattr(args, "verbosity", 1) >= 2 else logging.WARNING,
         format="%(levelname)s: %(message)s",
     )
 

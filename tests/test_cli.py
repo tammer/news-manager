@@ -1,5 +1,6 @@
 """CLI behavior for from-db selectors."""
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -54,6 +55,28 @@ def test_main_ingest_passes_html_discovery_llm(
     code = main(["ingest", "--html-discovery-llm"])
     assert code == 0
     assert mock_run_from_db.call_args.kwargs["html_discovery_llm"] is True
+    assert mock_run_from_db.call_args.kwargs["verbosity"] == 1
+
+
+@patch("news_manager.cli.run_pipeline_from_db")
+@patch("news_manager.cli.create_supabase_client")
+@patch("news_manager.cli.groq_api_key")
+@patch("news_manager.cli.supabase_settings")
+@patch("news_manager.cli.load_dotenv_if_present")
+@patch("news_manager.cli.logging.basicConfig")
+def test_main_ingest_passes_explicit_verbosity(
+    mock_basic_config: MagicMock,
+    _mock_dotenv: MagicMock,
+    _mock_supabase_settings: MagicMock,
+    _mock_groq: MagicMock,
+    mock_create_supabase: MagicMock,
+    mock_run_from_db: MagicMock,
+) -> None:
+    mock_create_supabase.return_value = MagicMock()
+    code = main(["ingest", "--verbosity", "2"])
+    assert code == 0
+    assert mock_run_from_db.call_args.kwargs["verbosity"] == 2
+    assert mock_basic_config.call_args.kwargs["level"] == logging.DEBUG
 
 
 def test_main_rejects_removed_v1_flags() -> None:

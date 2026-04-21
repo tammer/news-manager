@@ -63,9 +63,9 @@ Top-level subcommands (required after normalization):
 | `--max-articles` | int | `15` | Max articles to process per source (pipeline cap). |
 | `--timeout` | float | `30.0` | HTTP client timeout (seconds). |
 | `--content-max-chars` | int | `12000` | Max article body characters sent to the LLM. |
-| `-v` / `--verbose` | flag | off | Sets logging to **INFO** on stderr (otherwise WARNING). Use **`ingest -v --html-discovery-llm`** to see **INFO** lines from the **`news_manager.html_discovery`** logger (candidate counts, LLM timing, fallback warnings). For full candidate tables and raw-parse snippets, run the process with the **`news_manager.html_discovery`** logger at **DEBUG** (e.g. your own `logging` config). |
+| `--verbosity` | int (`0`,`1`,`2`) | `1` | Controls ingest operator output and debug logging. `0`: silent ingest progress output. `1`: human-readable progress lines (run start, category/source/article, include/exclude decision reason, and per-source summary). `2`: same as `1` plus process-wide **DEBUG** logging (including detailed discovery diagnostics). |
 
-**Stdout/stderr:** Pipeline progress and errors follow `news_manager` logging and `run_report` behavior (see README / pipeline code).
+**Stdout/stderr:** Human-readable ingest progress (verbosity `1`/`2`) is printed to **stdout**. Logger output goes through Python logging config (with **DEBUG** enabled at verbosity `2`; otherwise **WARNING** and above). Errors still surface via stderr/exit codes in command handlers.
 
 **Exit codes:**
 
