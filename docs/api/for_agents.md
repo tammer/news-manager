@@ -83,6 +83,7 @@ Supported **`OPTIONS`** paths:
 |-------|---------------------|
 | `error` | e.g. `no_results`, `not_a_listing`, `upstream_timeout` |
 | `message` | Human-readable reason |
+| `details` | Optional object with troubleshooting context for upstream failures (for example: `stage`, `reason`, `url`, and when available `status_code`/`final_url`/`bytes_read`/`response_headers`). For HTTP status failures, `body_preview` may include a truncated upstream body sample. |
 
 Malformed JSON or missing `query` → **400** with `ok: false`, `error: "no_results"`, and a descriptive `message`. Unexpected server errors during resolution → **500** with `ok: false`, `error: "upstream_timeout"`, `message: "Resolution failed unexpectedly."`
 

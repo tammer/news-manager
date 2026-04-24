@@ -194,10 +194,10 @@ def _resolve_redirects_once(url: str) -> str:
         return _scrub_url(url)
 
 
-def fetch_html_limited(url: str) -> tuple[str | None, str | None]:
-    """Return (html, final_url) or (None, None) on failure."""
+def fetch_html_limited(url: str) -> tuple[str | None, str | None, dict[str, Any] | None]:
+    """Return (html, final_url, error_details)."""
     if not url_fetch_allowed(url):
-        return None, None
+        return None, None, {"stage": "url_validation", "reason": "url_not_allowed"}
     try:
         with httpx.Client(
             timeout=_HTTP_TIMEOUT,
@@ -205,8 +205,9 @@ def fetch_html_limited(url: str) -> tuple[str | None, str | None]:
             headers={"User-Agent": _USER_AGENT},
         ) as client:
             with client.stream("GET", url) as resp:
-                resp.raise_for_status()
                 final_url = str(resp.url)
+                status_code = resp.status_code
+                content_type = (resp.headers.get("content-type") or "").strip()
                 enc = resp.encoding or "utf-8"
                 chunks: list[bytes] = []
                 total = 0
@@ -218,11 +219,51 @@ def fetch_html_limited(url: str) -> tuple[str | None, str | None]:
                     if total >= _MAX_HTML_BYTES:
                         break
                 raw = b"".join(chunks)
+                response_headers = {
+                    "content_type": content_type,
+                    "content_length": (resp.headers.get("content-length") or "").strip(),
+                    "server": (resp.headers.get("server") or "").strip(),
+                }
         text = raw.decode(enc, errors="replace")
-        return text, final_url
+        if status_code >= 400:
+            detail: dict[str, Any] = {
+                "stage": "homepage_fetch",
+                "reason": f"http_{status_code}",
+                "url": _scrub_url(url),
+                "final_url": _scrub_url(final_url),
+                "status_code": status_code,
+                "bytes_read": len(raw),
+                "response_headers": response_headers,
+            }
+            preview = text[:600].strip()
+            if preview:
+                detail["body_preview"] = preview
+            return None, None, detail
+        if not text.strip():
+            return (
+                None,
+                None,
+                {
+                    "stage": "homepage_fetch",
+                    "reason": "empty_body",
+                    "url": _scrub_url(url),
+                    "final_url": _scrub_url(final_url),
+                    "status_code": status_code,
+                    "content_type": content_type,
+                    "bytes_read": len(raw),
+                },
+            )
+        return text, final_url, None
     except Exception as e:
         logger.info("fetch_html_limited failed for %s: %s", url, e)
-        return None, None
+        detail: dict[str, Any] = {
+            "stage": "homepage_fetch",
+            "reason": e.__class__.__name__,
+            "url": _scrub_url(url),
+        }
+        if isinstance(e, httpx.RequestError) and e.request is not None:
+            detail["final_url"] = _scrub_url(str(e.request.url))
+        return None, None, detail
 
 
 def _page_title(html: str) -> str:
@@ -415,9 +456,21 @@ def resolve_source(
     if not url_fetch_allowed(homepage):
         return {"ok": False, "error": "no_results", "message": "Resolved URL is not allowed to fetch."}
 
-    html, final_url = fetch_html_limited(homepage)
+    fetch_result = fetch_html_limited(homepage)
+    if len(fetch_result) == 3:
+        html, final_url, fetch_err = fetch_result
+    else:
+        html, final_url = fetch_result
+        fetch_err = None
     if not html or not final_url:
-        return {"ok": False, "error": "upstream_timeout", "message": "Could not fetch the homepage."}
+        out: dict[str, Any] = {
+            "ok": False,
+            "error": "upstream_timeout",
+            "message": "Could not fetch the homepage.",
+        }
+        if fetch_err:
+            out["details"] = fetch_err
+        return out
 
     homepage_final = _scrub_url(final_url)
 
