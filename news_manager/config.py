@@ -13,6 +13,8 @@ DEFAULT_HTTP_TIMEOUT = 30.0
 # Max characters of article body sent to the LLM (plan: document truncation)
 DEFAULT_CONTENT_MAX_CHARS = 12000
 DEFAULT_HTML_DISCOVERY_MAX_CANDIDATES = 200
+DEFAULT_SCRAPINGDOG_TIMEOUT = 60.0
+DEFAULT_SCRAPINGDOG_FALLBACK_ON = {403, 429, 500, 502, 503, 504}
 
 
 def load_dotenv_if_present() -> None:
@@ -49,6 +51,45 @@ def html_discovery_max_candidates() -> int:
         return max(1, min(n, 500))
     except ValueError:
         return DEFAULT_HTML_DISCOVERY_MAX_CANDIDATES
+
+
+def scrapingdog_enabled() -> bool:
+    raw = os.environ.get("SCRAPINGDOG_ENABLED", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def scrapingdog_api_key_optional() -> str | None:
+    key = os.environ.get("SCRAPINGDOG_API_KEY", "").strip()
+    return key or None
+
+
+def scrapingdog_timeout() -> float:
+    raw = os.environ.get("SCRAPINGDOG_TIMEOUT", "").strip()
+    if not raw:
+        return DEFAULT_SCRAPINGDOG_TIMEOUT
+    try:
+        value = float(raw)
+    except ValueError:
+        return DEFAULT_SCRAPINGDOG_TIMEOUT
+    return max(1.0, min(value, 120.0))
+
+
+def scrapingdog_fallback_statuses() -> set[int]:
+    raw = os.environ.get("SCRAPINGDOG_FALLBACK_ON", "").strip()
+    if not raw:
+        return set(DEFAULT_SCRAPINGDOG_FALLBACK_ON)
+    out: set[int] = set()
+    for part in raw.split(","):
+        token = part.strip()
+        if not token:
+            continue
+        try:
+            code = int(token)
+        except ValueError:
+            continue
+        if 100 <= code <= 599:
+            out.add(code)
+    return out or set(DEFAULT_SCRAPINGDOG_FALLBACK_ON)
 
 
 def supabase_url_base() -> str | None:

@@ -14,7 +14,14 @@ import feedparser
 import httpx
 from bs4 import BeautifulSoup
 
-from news_manager.config import DEFAULT_HTTP_TIMEOUT, groq_model
+from news_manager.config import (
+    DEFAULT_HTTP_TIMEOUT,
+    groq_model,
+    scrapingdog_api_key_optional,
+    scrapingdog_enabled,
+    scrapingdog_fallback_statuses,
+    scrapingdog_timeout,
+)
 from news_manager.fetch import _looks_like_feed_xml
 from news_manager.llm import get_client
 from news_manager.summarize import _parse_json_response
@@ -25,6 +32,7 @@ _HTTP_TIMEOUT = DEFAULT_HTTP_TIMEOUT
 _MAX_HTML_BYTES = 512_000
 _MAX_HTML_FOR_LLM = 24_000
 _USER_AGENT = "news-manager-source-resolve/1.0"
+_SCRAPINGDOG_API_URL = "https://api.scrapingdog.com/scrape"
 
 _JSON_FENCE = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
 
@@ -194,6 +202,45 @@ def _resolve_redirects_once(url: str) -> str:
         return _scrub_url(url)
 
 
+def _should_try_scrapingdog_for_status(status_code: int | None) -> bool:
+    if status_code is None:
+        return True
+    return status_code in scrapingdog_fallback_statuses()
+
+
+def _fetch_via_scrapingdog(url: str, *, reason: str) -> str | None:
+    if not scrapingdog_enabled():
+        return None
+    key = scrapingdog_api_key_optional()
+    if not key:
+        logger.info(
+            "Skipping Scrapingdog fallback for resolve URL %s: missing SCRAPINGDOG_API_KEY",
+            url,
+        )
+        return None
+    try:
+        logger.info("Trying Scrapingdog fallback for resolve URL %s: %s", url, reason)
+        r = httpx.get(
+            _SCRAPINGDOG_API_URL,
+            params={"api_key": key, "url": url},
+            timeout=scrapingdog_timeout(),
+        )
+        r.raise_for_status()
+        text = r.text or ""
+        if not text.strip():
+            logger.warning("Scrapingdog fallback returned empty body for resolve URL %s", url)
+            return None
+        logger.info(
+            "Scrapingdog fallback succeeded for resolve URL %s (bytes=%s)",
+            url,
+            len(text),
+        )
+        return text
+    except httpx.HTTPError as e:
+        logger.warning("Scrapingdog fallback failed for resolve URL %s: %s", url, e)
+        return None
+
+
 def fetch_html_limited(url: str) -> tuple[str | None, str | None, dict[str, Any] | None]:
     """Return (html, final_url, error_details)."""
     if not url_fetch_allowed(url):
@@ -226,6 +273,12 @@ def fetch_html_limited(url: str) -> tuple[str | None, str | None, dict[str, Any]
                 }
         text = raw.decode(enc, errors="replace")
         if status_code >= 400:
+            if _should_try_scrapingdog_for_status(status_code):
+                fallback = _fetch_via_scrapingdog(
+                    url, reason=f"homepage_fetch status={status_code}"
+                )
+                if fallback is not None:
+                    return fallback, _scrub_url(final_url), None
             detail: dict[str, Any] = {
                 "stage": "homepage_fetch",
                 "reason": f"http_{status_code}",
@@ -240,6 +293,9 @@ def fetch_html_limited(url: str) -> tuple[str | None, str | None, dict[str, Any]
                 detail["body_preview"] = preview
             return None, None, detail
         if not text.strip():
+            fallback = _fetch_via_scrapingdog(url, reason="homepage_fetch empty_body")
+            if fallback is not None:
+                return fallback, _scrub_url(final_url), None
             return (
                 None,
                 None,
@@ -255,6 +311,9 @@ def fetch_html_limited(url: str) -> tuple[str | None, str | None, dict[str, Any]
             )
         return text, final_url, None
     except Exception as e:
+        fallback = _fetch_via_scrapingdog(url, reason=f"homepage_fetch exception={e.__class__.__name__}")
+        if fallback is not None:
+            return fallback, _scrub_url(url), None
         logger.info("fetch_html_limited failed for %s: %s", url, e)
         detail: dict[str, Any] = {
             "stage": "homepage_fetch",

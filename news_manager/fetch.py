@@ -17,7 +17,13 @@ import trafilatura
 from bs4 import BeautifulSoup
 from trafilatura import extract_metadata
 
-from news_manager.config import groq_model_html_discovery
+from news_manager.config import (
+    groq_model_html_discovery,
+    scrapingdog_api_key_optional,
+    scrapingdog_enabled,
+    scrapingdog_fallback_statuses,
+    scrapingdog_timeout,
+)
 from news_manager.models import RawArticle
 
 logger = logging.getLogger(__name__)
@@ -29,6 +35,7 @@ USER_AGENT = "curl/8.7.1"
 _HTTP_429_MAX_ATTEMPTS = 4
 _HTTP_429_RETRY_AFTER_CAP_SEC = 120.0
 _HTTP_429_FALLBACK_BASE_SEC = 20.0
+_SCRAPINGDOG_API_URL = "https://api.scrapingdog.com/scrape"
 
 
 def _retry_delay_after_429(response: httpx.Response, attempt_index: int) -> float:
@@ -69,6 +76,45 @@ def _get_with_429_retry(client: httpx.Client, url: str) -> httpx.Response:
             _HTTP_429_MAX_ATTEMPTS,
         )
         time.sleep(delay)
+
+
+def _should_try_scrapingdog_for_status(status_code: int | None) -> bool:
+    if status_code is None:
+        return True
+    return status_code in scrapingdog_fallback_statuses()
+
+
+def _fetch_via_scrapingdog(url: str, *, context: str, reason: str) -> str | None:
+    if not scrapingdog_enabled():
+        return None
+    key = scrapingdog_api_key_optional()
+    if not key:
+        logger.info(
+            "Skipping Scrapingdog fallback for %s (%s): missing SCRAPINGDOG_API_KEY",
+            url,
+            context,
+        )
+        return None
+    params = {
+        "api_key": key,
+        "url": url,
+    }
+    try:
+        logger.info(
+            "Trying Scrapingdog fallback for %s (%s): %s",
+            url,
+            context,
+            reason,
+        )
+        r = httpx.get(_SCRAPINGDOG_API_URL, params=params, timeout=scrapingdog_timeout())
+        r.raise_for_status()
+        if not r.text or not r.text.strip():
+            logger.warning("Scrapingdog returned empty body for %s (%s)", url, context)
+            return None
+        return r.text
+    except httpx.HTTPError as e:
+        logger.warning("Scrapingdog fallback failed for %s (%s): %s", url, context, e)
+        return None
 
 # Paths that are unlikely to be article pages (heuristic; document in code).
 PATH_DENY_SUBSTRINGS = (
@@ -255,14 +301,31 @@ def _response_ok_for_article_html(ctype: str, body_prefix: str) -> bool:
 def fetch_html(client: httpx.Client, url: str) -> str | None:
     try:
         r = _get_with_429_retry(client, url)
-        r.raise_for_status()
+        if r.status_code >= 400:
+            if _should_try_scrapingdog_for_status(r.status_code):
+                fallback = _fetch_via_scrapingdog(
+                    url, context="article", reason=f"status={r.status_code}"
+                )
+                if fallback is not None:
+                    return fallback
+            r.raise_for_status()
         ctype = r.headers.get("content-type", "")
         prefix = r.text[:2000] if r.text else ""
         if not _response_ok_for_article_html(ctype, prefix):
+            fallback = _fetch_via_scrapingdog(
+                url,
+                context="article",
+                reason=f"non_html content-type={ctype or '(none)'}",
+            )
+            if fallback is not None:
+                return fallback
             logger.warning("Skipping non-HTML response for %s: %s", url, ctype)
             return None
         return r.text
     except httpx.HTTPError as e:
+        fallback = _fetch_via_scrapingdog(url, context="article", reason=f"http_error={e}")
+        if fallback is not None:
+            return fallback
         logger.warning("HTTP error fetching %s: %s", url, e)
         return None
 
@@ -395,9 +458,19 @@ def fetch_listing_body(client: httpx.Client, url: str) -> str | None:
     """
     try:
         r = _get_with_429_retry(client, url)
-        r.raise_for_status()
+        if r.status_code >= 400:
+            if _should_try_scrapingdog_for_status(r.status_code):
+                fallback = _fetch_via_scrapingdog(
+                    url, context="listing", reason=f"status={r.status_code}"
+                )
+                if fallback is not None:
+                    return fallback
+            r.raise_for_status()
         text = r.text
         if not text or not text.strip():
+            fallback = _fetch_via_scrapingdog(url, context="listing", reason="empty_body")
+            if fallback is not None:
+                return fallback
             return None
         ctype = (r.headers.get("content-type") or "").lower()
         if any(x in ctype for x in ("xml", "rss", "atom", "rdf")):
@@ -408,6 +481,13 @@ def fetch_listing_body(client: httpx.Client, url: str) -> str | None:
             return text
         if _response_ok_for_article_html(ctype, text[:2000]):
             return text
+        fallback = _fetch_via_scrapingdog(
+            url,
+            context="listing",
+            reason=f"unclassified content-type={ctype or '(none)'}",
+        )
+        if fallback is not None:
+            return fallback
         logger.warning(
             "discovery: could not classify listing response url=%s content-type=%s",
             url,
@@ -415,6 +495,9 @@ def fetch_listing_body(client: httpx.Client, url: str) -> str | None:
         )
         return None
     except httpx.HTTPError as e:
+        fallback = _fetch_via_scrapingdog(url, context="listing", reason=f"http_error={e}")
+        if fallback is not None:
+            return fallback
         logger.warning("discovery: HTTP error fetching listing %s: %s", url, e)
         return None
 

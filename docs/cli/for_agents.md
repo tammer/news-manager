@@ -49,6 +49,10 @@ Top-level subcommands (required after normalization):
 | `GROQ_MODEL` | Model for article filter/summarize (default in `news_manager.config`). |
 | `GROQ_MODEL_HTML_DISCOVERY` | If set, model used only for **HTML homepage link picking** when **`--html-discovery-llm`** is on; otherwise **`GROQ_MODEL`** is used. |
 | `HTML_DISCOVERY_MAX_CANDIDATES` | Max homepage anchor rows sent to that step (default **200**, clamped to **1–500**). |
+| `SCRAPINGDOG_ENABLED` | Enable fallback provider for listing/article fetches (`true`/`1`/`yes`/`on`). |
+| `SCRAPINGDOG_API_KEY` | Scrapingdog API key used when fallback is enabled. |
+| `SCRAPINGDOG_TIMEOUT` | Fallback request timeout in seconds (default **60**, clamped **1–120**). |
+| `SCRAPINGDOG_FALLBACK_ON` | Comma-separated HTTP status codes that trigger fallback on direct response (default **403,429,500,502,503,504**). |
 
 **Flags:**
 
@@ -66,6 +70,8 @@ Top-level subcommands (required after normalization):
 | `--verbosity` | int (`0`,`1`,`2`) | `1` | Controls ingest operator output and debug logging. `0`: silent ingest progress output. `1`: human-readable progress lines (run start, category/source/article, include/exclude decision reason, and per-source summary). `2`: same as `1` plus process-wide **DEBUG** logging (including detailed discovery diagnostics). |
 
 **Stdout/stderr:** Human-readable ingest progress (verbosity `1`/`2`) is printed to **stdout**. Logger output goes through Python logging config (with **DEBUG** enabled at verbosity `2`; otherwise **WARNING** and above). Errors still surface via stderr/exit codes in command handlers.
+
+**Fallback semantics:** For both source listing fetches and article-page fetches, ingest attempts direct HTTP first. Scrapingdog fallback is then attempted for configured status/error/content-classification failures. With fallback disabled (default), behavior is unchanged.
 
 **Exit codes:**
 

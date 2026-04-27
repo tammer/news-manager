@@ -658,6 +658,51 @@ def test_evaluate_single_article_fetch_failure_returns_reason(
     assert result["persisted"] is False
 
 
+@patch("news_manager.pipeline.filter_and_summarize_outcome")
+@patch("news_manager.pipeline.fetch_single_raw_article")
+@patch("news_manager.pipeline.fetch_sources_for_category_user")
+@patch("news_manager.pipeline.fetch_category_for_user")
+def test_evaluate_single_article_fetch_success_allows_include_path(
+    mock_category: MagicMock,
+    mock_sources: MagicMock,
+    mock_fetch_one: MagicMock,
+    mock_outcome: MagicMock,
+) -> None:
+    # fetch_single_raw_article may be fulfilled by direct fetch or fallback provider.
+    mock_category.return_value = {
+        "category_id": "cid-1",
+        "category_name": "News",
+        "category_instruction": "default instruction",
+    }
+    mock_sources.return_value = []
+    mock_fetch_one.return_value = RawArticle(
+        title="T", date=None, content="c", url="https://example.com/a"
+    )
+    mock_outcome.return_value = SummarizeOutcome(
+        output=OutputArticle(
+            title="T",
+            date=None,
+            content="c",
+            url="https://example.com/a",
+            short_summary="s",
+            full_summary="f",
+            source="example.com",
+        ),
+        outcome="included",
+        why="Matches category focus.",
+    )
+
+    result = evaluate_single_article_from_db(
+        supabase_client=MagicMock(),
+        user_id="user-1",
+        category_id="cid-1",
+        url="https://example.com/a",
+    )
+    assert result["included"] is True
+    assert result["reason"] == "Matches category focus."
+    assert result["short_summary"] == "s"
+
+
 @patch("news_manager.pipeline.fetch_single_raw_article")
 @patch("news_manager.pipeline.filter_and_summarize_outcome")
 @patch("news_manager.pipeline.fetch_sources_for_category_user")

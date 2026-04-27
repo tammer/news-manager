@@ -5,6 +5,7 @@ import os
 import time
 from unittest.mock import MagicMock, patch
 
+import httpx
 import jwt
 import pytest
 
@@ -355,3 +356,65 @@ def test_flask_resolve_200_mocked(
     assert data["ok"] is True
     assert data["use_rss"] is False
     assert data["rss_found"] is False
+
+
+def test_fetch_html_limited_uses_scrapingdog_on_configured_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from news_manager.source_resolve import fetch_html_limited
+
+    monkeypatch.setenv("SCRAPINGDOG_ENABLED", "true")
+    monkeypatch.setenv("SCRAPINGDOG_API_KEY", "sd-key")
+    req = httpx.Request("GET", "https://example.com/")
+    direct = httpx.Response(
+        403,
+        request=req,
+        headers={"content-type": "text/html"},
+        text="blocked",
+    )
+    fallback_resp = httpx.Response(
+        200,
+        request=httpx.Request("GET", "https://api.scrapingdog.com/scrape"),
+        text="<html><title>Fallback</title></html>",
+    )
+    with patch("news_manager.source_resolve.httpx.Client") as mock_client_cls:
+        cm = MagicMock()
+        mock_client_cls.return_value.__enter__.return_value = cm
+        stream_cm = MagicMock()
+        stream_cm.__enter__.return_value = direct
+        cm.stream.return_value = stream_cm
+        with patch("news_manager.source_resolve.httpx.get", return_value=fallback_resp) as mock_sd:
+            html, final_url, err = fetch_html_limited("https://example.com/")
+    assert err is None
+    assert html is not None and "Fallback" in html
+    assert final_url == "https://example.com/"
+    mock_sd.assert_called_once()
+
+
+def test_fetch_html_limited_no_scrapingdog_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from news_manager.source_resolve import fetch_html_limited
+
+    monkeypatch.delenv("SCRAPINGDOG_ENABLED", raising=False)
+    monkeypatch.setenv("SCRAPINGDOG_API_KEY", "sd-key")
+    req = httpx.Request("GET", "https://example.com/")
+    direct = httpx.Response(
+        403,
+        request=req,
+        headers={"content-type": "text/html"},
+        text="blocked",
+    )
+    with patch("news_manager.source_resolve.httpx.Client") as mock_client_cls:
+        cm = MagicMock()
+        mock_client_cls.return_value.__enter__.return_value = cm
+        stream_cm = MagicMock()
+        stream_cm.__enter__.return_value = direct
+        cm.stream.return_value = stream_cm
+        with patch("news_manager.source_resolve.httpx.get") as mock_sd:
+            html, final_url, err = fetch_html_limited("https://example.com/")
+    assert html is None
+    assert final_url is None
+    assert isinstance(err, dict)
+    assert err.get("reason") == "http_403"
+    mock_sd.assert_not_called()

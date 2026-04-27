@@ -7,6 +7,10 @@ from news_manager.config import (
     groq_api_key,
     groq_model_html_discovery,
     html_discovery_max_candidates,
+    scrapingdog_api_key_optional,
+    scrapingdog_enabled,
+    scrapingdog_fallback_statuses,
+    scrapingdog_timeout,
     supabase_jwt_secret_optional,
     supabase_settings,
 )
@@ -70,3 +74,43 @@ def test_assert_resolve_api_supabase_auth_config(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
     assert_resolve_api_supabase_auth_config()
+
+
+def test_scrapingdog_enabled_parses_truthy(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SCRAPINGDOG_ENABLED", raising=False)
+    assert scrapingdog_enabled() is False
+    monkeypatch.setenv("SCRAPINGDOG_ENABLED", "true")
+    assert scrapingdog_enabled() is True
+    monkeypatch.setenv("SCRAPINGDOG_ENABLED", "1")
+    assert scrapingdog_enabled() is True
+    monkeypatch.setenv("SCRAPINGDOG_ENABLED", "off")
+    assert scrapingdog_enabled() is False
+
+
+def test_scrapingdog_api_key_optional(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SCRAPINGDOG_API_KEY", raising=False)
+    assert scrapingdog_api_key_optional() is None
+    monkeypatch.setenv("SCRAPINGDOG_API_KEY", "  sd_key  ")
+    assert scrapingdog_api_key_optional() == "sd_key"
+
+
+def test_scrapingdog_timeout_defaults_and_clamps(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SCRAPINGDOG_TIMEOUT", raising=False)
+    assert scrapingdog_timeout() == 60.0
+    monkeypatch.setenv("SCRAPINGDOG_TIMEOUT", "90")
+    assert scrapingdog_timeout() == 90.0
+    monkeypatch.setenv("SCRAPINGDOG_TIMEOUT", "bad")
+    assert scrapingdog_timeout() == 60.0
+    monkeypatch.setenv("SCRAPINGDOG_TIMEOUT", "0.1")
+    assert scrapingdog_timeout() == 1.0
+    monkeypatch.setenv("SCRAPINGDOG_TIMEOUT", "900")
+    assert scrapingdog_timeout() == 120.0
+
+
+def test_scrapingdog_fallback_statuses_parses_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SCRAPINGDOG_FALLBACK_ON", raising=False)
+    assert scrapingdog_fallback_statuses() == {403, 429, 500, 502, 503, 504}
+    monkeypatch.setenv("SCRAPINGDOG_FALLBACK_ON", " 403, 429, 503 ")
+    assert scrapingdog_fallback_statuses() == {403, 429, 503}
+    monkeypatch.setenv("SCRAPINGDOG_FALLBACK_ON", "abc,700")
+    assert scrapingdog_fallback_statuses() == {403, 429, 500, 502, 503, 504}

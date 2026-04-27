@@ -11,6 +11,7 @@ from news_manager.fetch import (
     extract_sitemap_http_urls,
     fetch_articles_for_source,
     fetch_html,
+    fetch_listing_body,
 )
 
 
@@ -197,3 +198,79 @@ def test_fetch_html_stops_after_max_429_attempts(mock_sleep: MagicMock) -> None:
     out = fetch_html(client, "https://example.com/c")
     assert out is None
     assert client.get.call_count == 4
+
+
+def test_fetch_html_uses_scrapingdog_fallback_on_configured_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SCRAPINGDOG_ENABLED", "true")
+    monkeypatch.setenv("SCRAPINGDOG_API_KEY", "sd-key")
+    req = httpx.Request("GET", "https://example.com/protected")
+    direct = httpx.Response(403, request=req, headers={"content-type": "text/html"}, text="")
+    client = MagicMock()
+    client.get.return_value = direct
+    fallback_resp = httpx.Response(
+        200,
+        request=httpx.Request("GET", "https://api.scrapingdog.com/scrape"),
+        text="<html><body>from fallback</body></html>",
+    )
+    with patch("news_manager.fetch.httpx.get", return_value=fallback_resp) as mock_sd:
+        out = fetch_html(client, "https://example.com/protected")
+    assert out == "<html><body>from fallback</body></html>"
+    mock_sd.assert_called_once()
+
+
+def test_fetch_html_does_not_use_scrapingdog_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("SCRAPINGDOG_ENABLED", raising=False)
+    monkeypatch.setenv("SCRAPINGDOG_API_KEY", "sd-key")
+    req = httpx.Request("GET", "https://example.com/protected")
+    direct = httpx.Response(403, request=req, headers={"content-type": "text/html"}, text="")
+    client = MagicMock()
+    client.get.return_value = direct
+    with patch("news_manager.fetch.httpx.get") as mock_sd:
+        out = fetch_html(client, "https://example.com/protected")
+    assert out is None
+    mock_sd.assert_not_called()
+
+
+def test_fetch_listing_body_uses_scrapingdog_for_unclassified_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SCRAPINGDOG_ENABLED", "true")
+    monkeypatch.setenv("SCRAPINGDOG_API_KEY", "sd-key")
+    req = httpx.Request("GET", "https://example.com/")
+    direct = httpx.Response(
+        200,
+        request=req,
+        headers={"content-type": "application/octet-stream"},
+        text="binary-looking-body",
+    )
+    client = MagicMock()
+    client.get.return_value = direct
+    fallback_resp = httpx.Response(
+        200,
+        request=httpx.Request("GET", "https://api.scrapingdog.com/scrape"),
+        text="<html><body>listing page</body></html>",
+    )
+    with patch("news_manager.fetch.httpx.get", return_value=fallback_resp) as mock_sd:
+        out = fetch_listing_body(client, "https://example.com/")
+    assert out == "<html><body>listing page</body></html>"
+    mock_sd.assert_called_once()
+
+
+def test_fetch_listing_body_no_fallback_on_non_configured_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SCRAPINGDOG_ENABLED", "true")
+    monkeypatch.setenv("SCRAPINGDOG_API_KEY", "sd-key")
+    monkeypatch.setenv("SCRAPINGDOG_FALLBACK_ON", "403,429,500")
+    req = httpx.Request("GET", "https://example.com/")
+    direct = httpx.Response(404, request=req, text="not found")
+    client = MagicMock()
+    client.get.return_value = direct
+    with patch("news_manager.fetch.httpx.get") as mock_sd:
+        out = fetch_listing_body(client, "https://example.com/")
+    assert out is None
+    mock_sd.assert_not_called()

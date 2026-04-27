@@ -85,6 +85,16 @@ Supported **`OPTIONS`** paths:
 | `message` | Human-readable reason |
 | `details` | Optional object with troubleshooting context for upstream failures (for example: `stage`, `reason`, `url`, and when available `status_code`/`final_url`/`bytes_read`/`response_headers`). For HTTP status failures, `body_preview` may include a truncated upstream body sample. |
 
+**Resolver fetch fallback (optional):**
+
+- `resolve_source` homepage retrieval (`fetch_html_limited`) attempts direct HTTP first.
+- When enabled, it can fallback to Scrapingdog for configured status failures, empty body, or request exceptions.
+- Uses the same environment knobs as ingest/evaluate fallback:
+  - `SCRAPINGDOG_ENABLED`
+  - `SCRAPINGDOG_API_KEY`
+  - `SCRAPINGDOG_TIMEOUT`
+  - `SCRAPINGDOG_FALLBACK_ON`
+
 Malformed JSON or missing `query` → **400** with `ok: false`, `error: "no_results"`, and a descriptive `message`. Unexpected server errors during resolution → **500** with `ok: false`, `error: "upstream_timeout"`, `message: "Resolution failed unexpectedly."`
 
 ---
@@ -191,6 +201,17 @@ Each source:
 | `html_discovery_llm` | boolean | no | `false` | If **`true`**, when **auto** discovery uses an **HTML** listing, run the extra Groq step to pick article links from anchors (ignored when **`use_rss: true`** on that source). Invalid model output falls back to heuristics. Same env tuning as CLI: **`GROQ_MODEL_HTML_DISCOVERY`**, **`HTML_DISCOVERY_MAX_CANDIDATES`**. |
 
 **Logging:** With server logging at **INFO**, look for **`discovery:`** lines, **`news_manager.html_discovery`**, and **`Pipeline discover:`** (`force_feed_xml=…`) from **`news_manager.pipeline`** during jobs.
+
+**Fetch fallback provider (optional):**
+
+- Listing discovery (`fetch_listing_body`) and article fetch (`fetch_html`) run **direct HTTP first**.
+- If enabled, fallback may call Scrapingdog for configured status/error/content-classification failures.
+- Fallback is gated by env in `news_manager.config`:
+  - `SCRAPINGDOG_ENABLED` (truthy enables fallback)
+  - `SCRAPINGDOG_API_KEY` (required when enabled)
+  - `SCRAPINGDOG_TIMEOUT` (default `60`, clamped to `1..120`)
+  - `SCRAPINGDOG_FALLBACK_ON` (CSV status-code set; defaults to `403,429,500,502,503,504`)
+- If fallback is disabled or key is missing, behavior remains the prior direct-fetch-only path.
 
 **Success:** **202 Accepted**
 
