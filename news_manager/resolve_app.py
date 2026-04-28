@@ -27,6 +27,12 @@ from news_manager.pipeline_jobs import (
     get_pipeline_job_owner_user_id,
     start_pipeline_job,
 )
+from news_manager.source_discovery_jobs import (
+    SourceDiscoveryParams,
+    get_source_discovery_job,
+    get_source_discovery_job_owner_user_id,
+    start_source_discovery_job,
+)
 from news_manager.source_resolve import resolve_source_json_body
 from news_manager.supabase_sync import create_supabase_client
 from news_manager.user_sources_catalog import import_user_sources_catalog
@@ -223,6 +229,37 @@ def _parse_evaluate_article_request(
     )
 
 
+def _parse_source_discovery_request(
+    *,
+    body: dict[str, Any],
+    auth_user_id: str,
+) -> tuple[SourceDiscoveryParams | None, tuple[object, int] | None]:
+    query, query_err = _optional_str_field(body, "query")
+    if query_err is not None:
+        return None, query_err
+    if query is None:
+        return None, _json_error("'query' is required.", status=400)
+
+    locale, locale_err = _optional_str_field(body, "locale")
+    if locale_err is not None:
+        return None, locale_err
+
+    max_results = body.get("max_results", 5)
+    if not isinstance(max_results, int):
+        return None, _json_error("'max_results' must be an integer.", status=400)
+    max_results_clamped = max(1, min(max_results, 10))
+
+    return (
+        SourceDiscoveryParams(
+            user_id=auth_user_id,
+            query=query,
+            locale=locale,
+            max_results=max_results_clamped,
+        ),
+        None,
+    )
+
+
 def create_app() -> Flask:
     app = Flask(__name__)
     allowed_origins = _allowed_cors_origins()
@@ -250,6 +287,64 @@ def create_app() -> Flask:
 
         payload, status = resolve_source_json_body(request.get_data())
         return jsonify(payload), status
+
+    @app.route("/api/sources/discover", methods=["OPTIONS"])
+    def source_discover_preflight() -> tuple[str, int]:
+        return "", 204
+
+    @app.post("/api/sources/discover")
+    def source_discover_start() -> tuple[object, int]:
+        claims, auth_err = _require_auth_claims()
+        if auth_err is not None:
+            return auth_err
+        assert claims is not None
+        auth_user_id, sub_err = _required_sub(claims)
+        if sub_err is not None:
+            return sub_err
+        assert auth_user_id is not None
+
+        body = request.get_json(silent=True)
+        if body is None or not isinstance(body, dict):
+            return _json_error("Body must be a JSON object.", status=400)
+
+        params, parse_err = _parse_source_discovery_request(body=body, auth_user_id=auth_user_id)
+        if parse_err is not None:
+            return parse_err
+        assert params is not None
+
+        job = start_source_discovery_job(params=params)
+        return jsonify({"ok": True, "job_id": job["job_id"], "status": job["status"]}), 202
+
+    @app.route("/api/sources/discover/<job_id>", methods=["OPTIONS"])
+    def source_discover_status_preflight(job_id: str) -> tuple[str, int]:
+        _ = job_id
+        return "", 204
+
+    @app.get("/api/sources/discover/<job_id>")
+    def source_discover_status(job_id: str) -> tuple[object, int]:
+        claims, auth_err = _require_auth_claims()
+        if auth_err is not None:
+            return auth_err
+        assert claims is not None
+        auth_user_id, sub_err = _required_sub(claims)
+        if sub_err is not None:
+            return sub_err
+        assert auth_user_id is not None
+
+        owner = get_source_discovery_job_owner_user_id(job_id)
+        if owner is None:
+            return _json_error("Source discovery job not found.", status=404, error="not_found")
+        if owner != auth_user_id:
+            return _json_error(
+                "You are not allowed to access this source discovery job.",
+                status=403,
+                error="forbidden",
+            )
+
+        payload = get_source_discovery_job(job_id)
+        if payload is None:
+            return _json_error("Source discovery job not found.", status=404, error="not_found")
+        return jsonify(payload), 200
 
     @app.route("/api/user/sources/import", methods=["OPTIONS"])
     def user_sources_import_preflight() -> tuple[str, int]:

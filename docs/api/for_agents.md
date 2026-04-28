@@ -43,6 +43,8 @@ For each route that supports **`OPTIONS`**, the handler returns **204** with an 
 Supported **`OPTIONS`** paths:
 
 - `/api/sources/resolve`
+- `/api/sources/discover`
+- `/api/sources/discover/<job_id>`
 - `/api/user/sources/import`
 - `/api/pipeline/run`
 - `/api/pipeline/run/<job_id>`
@@ -96,6 +98,91 @@ Supported **`OPTIONS`** paths:
   - `SCRAPINGDOG_FALLBACK_ON`
 
 Malformed JSON or missing `query` → **400** with `ok: false`, `error: "no_results"`, and a descriptive `message`. Unexpected server errors during resolution → **500** with `ok: false`, `error: "upstream_timeout"`, `message: "Resolution failed unexpectedly."`
+
+---
+
+## `POST /api/sources/discover`
+
+**Purpose:** Start an async source-discovery job that transforms a plain-English user intent into a ranked list of source suggestions. Suggestions include `name`, `url`, and short `why`.
+
+**Auth:** **Required** — same **`Authorization: Bearer`** behavior as other protected routes.
+
+**Request body:** JSON object.
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `query` | string | **yes** | — | Non-empty natural-language request. |
+| `locale` | string | no | `null` | Optional locale/region hint for search provider. |
+| `max_results` | integer | no | `5` | Number of suggestions requested; clamped to **1–10**. |
+
+**Success:** **202 Accepted**
+
+```json
+{
+  "ok": true,
+  "job_id": "<uuid>",
+  "status": "queued"
+}
+```
+
+**Errors:**
+
+| Status | `error` | When |
+|--------|---------|------|
+| 400 | `no_results` | Body missing/invalid fields (for example non-string `query`, non-integer `max_results`). |
+| 401 | `no_results` | Missing/invalid token, or missing required `sub`. |
+
+---
+
+## `GET /api/sources/discover/<job_id>`
+
+**Purpose:** Return status and (when complete) result for a source-discovery job.
+
+**Auth:** **Required** — Bearer token. Only the job owner may read the job.
+
+**Success:** **200**
+
+```json
+{
+  "ok": true,
+  "job_id": "<uuid>",
+  "status": "queued|running|succeeded|failed",
+  "started_at": "2026-04-28T00:00:00Z",
+  "finished_at": "2026-04-28T00:00:02Z",
+  "params": {
+    "user_id": "<jwt_sub>",
+    "query": "privacy and security newsletters",
+    "locale": null,
+    "max_results": 5
+  },
+  "result": {
+    "ok": true,
+    "suggestions": [
+      {
+        "name": "Example Source",
+        "url": "https://example.com/",
+        "why": "Relevant to your requested topic."
+      }
+    ],
+    "meta": {
+      "query": "privacy and security newsletters",
+      "candidates_considered": 12,
+      "max_results": 5
+    }
+  },
+  "error": null
+}
+```
+
+If `status` is `queued` or `running`, `result` is `null`. If `status` is `failed`, `error` contains the failure message.
+
+**Errors:**
+
+| Status | `error` | When |
+|--------|---------|------|
+| 401 | `no_results` | Missing/invalid token. |
+| 403 | `forbidden` | Authenticated user is not the job owner. |
+| 404 | `not_found` | Unknown job id. |
 
 ---
 

@@ -152,9 +152,23 @@ def _collect_candidates_from_query(user_query: str, *, max_results: int, region:
     q = user_query.strip()
     if not q:
         return []
-    parsed = urlparse(q if "://" in q else f"https://{q}")
-    if parsed.scheme in ("http", "https") and parsed.netloc:
-        u = _scrub_url(q if "://" in q else f"https://{q}")
+    direct_input = q if "://" in q else f"https://{q}"
+    parsed = urlparse(direct_input)
+    host = (parsed.hostname or "").strip()
+    looks_like_direct = (
+        parsed.scheme in ("http", "https")
+        and bool(parsed.netloc)
+        and " " not in q
+        and " " not in host
+        and (
+            "://" in q
+            or "." in host
+            or host.lower() == "localhost"
+            or host.replace("-", "").isalnum()
+        )
+    )
+    if looks_like_direct:
+        u = _scrub_url(direct_input)
         if url_fetch_allowed(u):
             return [{"title": "", "href": u, "body": "direct"}]
     return ddg_text_search(q, max_results=max_results, region=region)
