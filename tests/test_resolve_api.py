@@ -126,6 +126,36 @@ def test_resolve_source_pasted_feed_url(
 @patch("news_manager.source_resolve._chat_json")
 @patch("news_manager.source_resolve.fetch_html_limited")
 @patch("news_manager.source_resolve._collect_candidates_from_query")
+def test_resolve_source_astronomy_news_prefers_news_tag_feed(
+    mock_collect: MagicMock,
+    mock_fetch: MagicMock,
+    mock_chat: MagicMock,
+    mock_probe: MagicMock,
+) -> None:
+    mock_collect.return_value = [
+        {"title": "", "href": "https://www.astronomy.com/news", "body": "direct"},
+    ]
+    mock_chat.side_effect = []
+    mock_fetch.return_value = (
+        '<html><head><link rel="alternate" type="application/rss+xml" href="/tags/news/feed/" />'
+        "</head><body></body></html>",
+        "https://www.astronomy.com/tags/news/",
+    )
+    mock_probe.return_value = []
+
+    out = resolve_source("https://www.astronomy.com/news", max_results=5)
+    assert out["ok"] is True
+    assert out["use_rss"] is True
+    assert out["rss_found"] is True
+    assert out["resolved_url"] == "https://www.astronomy.com/tags/news/feed/"
+    assert out["homepage_url"] == "https://www.astronomy.com/tags/news/"
+    mock_chat.assert_not_called()
+
+
+@patch("news_manager.source_resolve._probe_feed_paths")
+@patch("news_manager.source_resolve._chat_json")
+@patch("news_manager.source_resolve.fetch_html_limited")
+@patch("news_manager.source_resolve._collect_candidates_from_query")
 def test_resolve_source_section_url_rejects_site_wide_rss(
     mock_collect: MagicMock,
     mock_fetch: MagicMock,
