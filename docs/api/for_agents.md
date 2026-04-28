@@ -103,7 +103,7 @@ Malformed JSON or missing `query` → **400** with `ok: false`, `error: "no_resu
 
 ## `POST /api/sources/discover`
 
-**Purpose:** Start an async source-discovery job that transforms a plain-English user intent into a ranked list of source suggestions. Each suggestion includes both a discovered `url` and an ingest-ready `index` URL.
+**Purpose:** Start an async source-discovery job that transforms a plain-English user intent into a ranked list of source suggestions.
 
 **Auth:** **Required** — same **`Authorization: Bearer`** behavior as other protected routes.
 
@@ -161,8 +161,6 @@ Malformed JSON or missing `query` → **400** with `ok: false`, `error: "no_resu
       {
         "name": "Example Source",
         "url": "https://example.com/",
-        "index": "https://example.com/feed.xml",
-        "index_is_rss": true,
         "why": "Relevant to your requested topic."
       }
     ],
@@ -184,8 +182,6 @@ Suggestion field semantics:
 |-------|------|---------|
 | `name` | string | Display name for the source. |
 | `url` | string | Primary discovered site URL selected by discovery ranking. |
-| `index` | string | Ingest-ready index URL for this source (prefers RSS/Atom when found; otherwise HTML listing/homepage). |
-| `index_is_rss` | boolean | Whether `index` should be treated as RSS/XML (`true`) or non-feed listing/homepage (`false`). |
 | `why` | string | Short rationale for why the source matches user intent. |
 
 **Errors:**

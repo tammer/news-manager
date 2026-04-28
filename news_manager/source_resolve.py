@@ -148,6 +148,30 @@ def ddg_text_search(query: str, *, max_results: int, region: str | None) -> list
     return out
 
 
+def _build_discovery_search_query(user_query: str) -> str:
+    """
+    Bias free-text discovery toward source-finding results (news/blog outlets),
+    while preserving direct user intent terms.
+    """
+    q = user_query.strip()
+    if not q:
+        return q
+    q_l = q.lower()
+    has_news = "news" in q_l
+    has_blog = "blog" in q_l or "blogs" in q_l
+    has_source = "source" in q_l or "sources" in q_l
+    suffix_parts: list[str] = []
+    if not has_news:
+        suffix_parts.append("news")
+    if not has_blog:
+        suffix_parts.append("blogs")
+    if not has_source:
+        suffix_parts.append("sources")
+    if not suffix_parts:
+        return q
+    return f"{q} {' '.join(suffix_parts)}"
+
+
 def _collect_candidates_from_query(user_query: str, *, max_results: int, region: str | None) -> list[dict[str, str]]:
     q = user_query.strip()
     if not q:
@@ -171,7 +195,8 @@ def _collect_candidates_from_query(user_query: str, *, max_results: int, region:
         u = _scrub_url(direct_input)
         if url_fetch_allowed(u):
             return [{"title": "", "href": u, "body": "direct"}]
-    return ddg_text_search(q, max_results=max_results, region=region)
+    search_query = _build_discovery_search_query(q)
+    return ddg_text_search(search_query, max_results=max_results, region=region)
 
 
 def _filter_search_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:

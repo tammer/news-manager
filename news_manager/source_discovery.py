@@ -13,7 +13,6 @@ from news_manager.source_resolve import (
     _collect_candidates_from_query,
     _scrub_url,
     fetch_html_limited,
-    resolve_source,
     url_fetch_allowed,
 )
 
@@ -169,26 +168,6 @@ def discover_sources(
                     "why": "Appears relevant to your query based on search context.",
                 }
             )
-
-    # Resolve each suggestion URL into the best ingest index (feed when available,
-    # otherwise listing/homepage URL), and expose if that index is RSS/XML.
-    for suggestion in suggestions:
-        source_url = _scrub_url(str(suggestion.get("url") or "").strip())
-        index = source_url
-        index_is_rss = False
-        if source_url and url_fetch_allowed(source_url):
-            try:
-                resolved = resolve_source(source_url, locale=locale, max_results=5)
-            except Exception:
-                logger.debug("resolve_source failed for discovered URL %s", source_url, exc_info=True)
-                resolved = None
-            if isinstance(resolved, dict) and bool(resolved.get("ok")):
-                resolved_url = _scrub_url(str(resolved.get("resolved_url") or "").strip())
-                if resolved_url and url_fetch_allowed(resolved_url):
-                    index = resolved_url
-                    index_is_rss = bool(resolved.get("use_rss"))
-        suggestion["index"] = index
-        suggestion["index_is_rss"] = index_is_rss
 
     return {
         "ok": True,
