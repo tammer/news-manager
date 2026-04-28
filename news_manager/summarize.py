@@ -187,11 +187,12 @@ def filter_and_summarize_outcome(
     One LLM call: filter+summarize, or summarize only (apply_filter False).
     Use this when you need included vs excluded vs error (e.g. caching).
     """
-    if not apply_filter:
+    cleaned_instructions = instructions.strip()
+    if not apply_filter or not cleaned_instructions:
         return _summarize_only(
             article,
             category=category,
-            instructions=instructions,
+            instructions=cleaned_instructions,
             content_max_chars=content_max_chars,
             source=source,
             emit_stderr=emit_stderr,
@@ -206,13 +207,11 @@ def filter_and_summarize_outcome(
         "according to the user's instructions. "
         "Respond with a single JSON object only, no other text."
     )
-    user = f"""USER_INSTRUCTIONS (apply to category "{category}"):
+    user = f"""USER_INSTRUCTIONS:
 
-{instructions}
+{cleaned_instructions}
 
 ---
-
-CATEGORY: {category}
 
 ARTICLE:
 Title: {article.title}
@@ -233,7 +232,7 @@ Respond with JSON only, using this exact shape:
 }}
 
 Always provide a non-empty "why" with one clear sentence tied to the instructions and article content.
-If the article does not match what the user wants for this category, set include to false.
+If the article does not match what the user wants, set include to false.
 The "full_summary" should summarize the article and make no reference to the user's instructions.
 """
 
