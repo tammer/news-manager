@@ -142,7 +142,13 @@ def test_source_discover_status_success(
         "result": {
             "ok": True,
             "suggestions": [
-                {"name": "EFF", "url": "https://www.eff.org/", "why": "Civil liberties and digital rights coverage."}
+                {
+                    "name": "EFF",
+                    "url": "https://www.eff.org/",
+                    "index": "https://www.eff.org/feed",
+                    "index_is_rss": True,
+                    "why": "Civil liberties and digital rights coverage.",
+                }
             ],
             "meta": {"query": "privacy news"},
         },
@@ -218,11 +224,13 @@ def test_source_discovery_jobs_async_lifecycle_failure() -> None:
 
 
 @patch("news_manager.source_discovery._chat_json")
+@patch("news_manager.source_discovery.resolve_source")
 @patch("news_manager.source_discovery.fetch_html_limited")
 @patch("news_manager.source_discovery._collect_candidates_from_query")
 def test_discover_sources_fallback_when_llm_invalid(
     mock_collect: Any,
     mock_fetch: Any,
+    mock_resolve_source: Any,
     mock_chat: Any,
 ) -> None:
     mock_collect.return_value = [
@@ -230,6 +238,11 @@ def test_discover_sources_fallback_when_llm_invalid(
         {"title": "Krebs", "href": "https://krebsonsecurity.com/", "body": "Security investigations."},
     ]
     mock_fetch.return_value = ("<html><title>Site</title></html>", "https://www.eff.org/", None)
+    mock_resolve_source.return_value = {
+        "ok": True,
+        "resolved_url": "https://www.eff.org/feed",
+        "use_rss": True,
+    }
     mock_chat.return_value = {"oops": "bad shape"}
     out = discover_sources("privacy news", max_results=2)
     assert out["ok"] is True
@@ -237,21 +250,30 @@ def test_discover_sources_fallback_when_llm_invalid(
     for item in out["suggestions"]:
         assert isinstance(item["name"], str)
         assert isinstance(item["url"], str)
+        assert isinstance(item["index"], str)
+        assert isinstance(item["index_is_rss"], bool)
         assert isinstance(item["why"], str)
 
 
 @patch("news_manager.source_discovery._chat_json")
+@patch("news_manager.source_discovery.resolve_source")
 @patch("news_manager.source_discovery.fetch_html_limited")
 @patch("news_manager.source_discovery._collect_candidates_from_query")
 def test_discover_sources_filters_unsafe_llm_urls(
     mock_collect: Any,
     mock_fetch: Any,
+    mock_resolve_source: Any,
     mock_chat: Any,
 ) -> None:
     mock_collect.return_value = [
         {"title": "EFF", "href": "https://www.eff.org/", "body": "Digital rights."},
     ]
     mock_fetch.return_value = ("<html><title>EFF</title></html>", "https://www.eff.org/", None)
+    mock_resolve_source.return_value = {
+        "ok": True,
+        "resolved_url": "https://www.eff.org/feed",
+        "use_rss": True,
+    }
     mock_chat.return_value = {
         "suggestions": [
             {"name": "Bad", "url": "https://127.0.0.1/private", "why": "Nope"},
@@ -262,6 +284,8 @@ def test_discover_sources_filters_unsafe_llm_urls(
     assert out["ok"] is True
     assert len(out["suggestions"]) == 1
     assert out["suggestions"][0]["url"] == "https://www.eff.org/"
+    assert out["suggestions"][0]["index"] == "https://www.eff.org/feed"
+    assert out["suggestions"][0]["index_is_rss"] is True
 
 
 @patch("news_manager.source_resolve.ddg_text_search")
