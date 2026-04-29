@@ -204,7 +204,7 @@ def _resolve_redirects_once(url: str) -> str:
 
 def _should_try_scrapingdog_for_status(status_code: int | None) -> bool:
     if status_code is None:
-        return True
+        return False
     return status_code in scrapingdog_fallback_statuses()
 
 
@@ -293,9 +293,6 @@ def fetch_html_limited(url: str) -> tuple[str | None, str | None, dict[str, Any]
                 detail["body_preview"] = preview
             return None, None, detail
         if not text.strip():
-            fallback = _fetch_via_scrapingdog(url, reason="homepage_fetch empty_body")
-            if fallback is not None:
-                return fallback, _scrub_url(final_url), None
             return (
                 None,
                 None,
@@ -311,9 +308,6 @@ def fetch_html_limited(url: str) -> tuple[str | None, str | None, dict[str, Any]
             )
         return text, final_url, None
     except Exception as e:
-        fallback = _fetch_via_scrapingdog(url, reason=f"homepage_fetch exception={e.__class__.__name__}")
-        if fallback is not None:
-            return fallback, _scrub_url(url), None
         logger.info("fetch_html_limited failed for %s: %s", url, e)
         detail: dict[str, Any] = {
             "stage": "homepage_fetch",

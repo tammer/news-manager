@@ -88,7 +88,7 @@ Supported **`OPTIONS`** paths:
 **Resolver fetch fallback (optional):**
 
 - `resolve_source` homepage retrieval (`fetch_html_limited`) attempts direct HTTP first.
-- When enabled, it can fallback to Scrapingdog for configured status failures, empty body, or request exceptions.
+- When enabled, it falls back to Scrapingdog only for configured HTTP status responses (via `SCRAPINGDOG_FALLBACK_ON`).
 - Uses the same environment knobs as ingest/evaluate fallback:
   - `SCRAPINGDOG_ENABLED`
   - `SCRAPINGDOG_API_KEY`
