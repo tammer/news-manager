@@ -26,4 +26,4 @@ When enabled, ingest/evaluate fetch paths can retry via Scrapingdog for hard-to-
   - **`SCRAPINGDOG_ENABLED`** (`true`/`1`/`yes`/`on`)
   - **`SCRAPINGDOG_API_KEY`**
   - **`SCRAPINGDOG_TIMEOUT`** (seconds, default `60`, clamped `1..120`)
-  - **`SCRAPINGDOG_FALLBACK_ON`** (comma-separated status codes; default `403,429,500,502,503,504`)
+  - **`SCRAPINGDOG_FALLBACK_ON`** (comma-separated status codes; default `403,429`)
