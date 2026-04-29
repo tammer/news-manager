@@ -210,7 +210,7 @@ Each source:
   - `SCRAPINGDOG_ENABLED` (truthy enables fallback)
   - `SCRAPINGDOG_API_KEY` (required when enabled)
   - `SCRAPINGDOG_TIMEOUT` (default `60`, clamped to `1..120`)
-  - `SCRAPINGDOG_FALLBACK_ON` (CSV status-code set; defaults to `403,429,500,502,503,504`)
+  - `SCRAPINGDOG_FALLBACK_ON` (CSV status-code set; defaults to `403,429`)
 - If fallback is disabled or key is missing, behavior remains the prior direct-fetch-only path.
 
 **Success:** **202 Accepted**

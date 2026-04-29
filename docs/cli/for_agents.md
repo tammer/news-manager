@@ -52,7 +52,7 @@ Top-level subcommands (required after normalization):
 | `SCRAPINGDOG_ENABLED` | Enable fallback provider for listing/article fetches (`true`/`1`/`yes`/`on`). |
 | `SCRAPINGDOG_API_KEY` | Scrapingdog API key used when fallback is enabled. |
 | `SCRAPINGDOG_TIMEOUT` | Fallback request timeout in seconds (default **60**, clamped **1–120**). |
-| `SCRAPINGDOG_FALLBACK_ON` | Comma-separated HTTP status codes that trigger fallback on direct response (default **403,429,500,502,503,504**). |
+| `SCRAPINGDOG_FALLBACK_ON` | Comma-separated HTTP status codes that trigger fallback on direct response (default **403,429**). |
 
 **Flags:**
 

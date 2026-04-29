@@ -109,8 +109,8 @@ def test_scrapingdog_timeout_defaults_and_clamps(monkeypatch: pytest.MonkeyPatch
 
 def test_scrapingdog_fallback_statuses_parses_list(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SCRAPINGDOG_FALLBACK_ON", raising=False)
-    assert scrapingdog_fallback_statuses() == {403, 429, 500, 502, 503, 504}
+    assert scrapingdog_fallback_statuses() == {403, 429}
     monkeypatch.setenv("SCRAPINGDOG_FALLBACK_ON", " 403, 429, 503 ")
     assert scrapingdog_fallback_statuses() == {403, 429, 503}
     monkeypatch.setenv("SCRAPINGDOG_FALLBACK_ON", "abc,700")
-    assert scrapingdog_fallback_statuses() == {403, 429, 500, 502, 503, 504}
+    assert scrapingdog_fallback_statuses() == {403, 429}
