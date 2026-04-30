@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import logging
 from typing import Any
 from urllib.parse import urlparse
@@ -21,6 +22,7 @@ logger = logging.getLogger(__name__)
 _MAX_SEARCH_RESULTS = 25
 _MAX_CANDIDATES_FOR_LLM = 12
 _MAX_FETCHED_PAGES = 5
+_MAX_FETCH_WORKERS = 3
 _MAX_HTML_SNIPPET = 1200
 
 
@@ -127,6 +129,17 @@ def _llm_rank_suggestions(query: str, candidates: list[dict[str, str]], max_resu
     return out
 
 
+def _fetch_candidate_hint(url: str) -> tuple[str | None, str | None]:
+    try:
+        html, final_url, _err = fetch_html_limited(url)
+    except Exception:
+        logger.debug("candidate fetch failed for %s", url, exc_info=True)
+        return None, None
+    if not html or not final_url:
+        return None, None
+    return _scrub_url(final_url), _extract_page_hint(html)
+
+
 def discover_sources(
     query: str,
     *,
@@ -145,16 +158,16 @@ def discover_sources(
     if not candidates:
         return {"ok": True, "suggestions": [], "meta": {"candidates_considered": 0}}
 
-    for candidate in candidates[:_MAX_FETCHED_PAGES]:
-        try:
-            html, final_url, _err = fetch_html_limited(candidate["href"])
-        except Exception:
-            logger.debug("candidate fetch failed for %s", candidate["href"], exc_info=True)
-            continue
-        if not html or not final_url:
-            continue
-        candidate["href"] = _scrub_url(final_url)
-        candidate["page_hint"] = _extract_page_hint(html)
+    candidates_to_fetch = candidates[:_MAX_FETCHED_PAGES]
+    worker_count = min(_MAX_FETCH_WORKERS, len(candidates_to_fetch))
+    if worker_count > 0:
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            fetched = executor.map(_fetch_candidate_hint, (c["href"] for c in candidates_to_fetch))
+            for candidate, (final_url, page_hint) in zip(candidates_to_fetch, fetched):
+                if not final_url or not page_hint:
+                    continue
+                candidate["href"] = final_url
+                candidate["page_hint"] = page_hint
 
     suggestions = _llm_rank_suggestions(q, candidates, max_results=max_results)
     if not suggestions:

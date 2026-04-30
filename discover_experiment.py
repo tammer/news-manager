@@ -22,6 +22,7 @@ import urllib.request
 SUPABASE_URL = "https://uaizrqhyomcgaowjetyd.supabase.co"
 SUPABASE_PUBLISHABLE_KEY = "sb_publishable_DSZ2FtoAtzUbMitch1yaMA_L_P1CsPK"
 SUPABASE_EMAIL = "tammer@tammer.com"
+DISCOVERY_API_BASE_URL = "http://127.0.0.1:8080"
 
 
 def _http_json(method: str, url: str, headers: dict[str, str], body: dict | None = None) -> dict:
@@ -99,11 +100,7 @@ def poll_discovery_job(api_base_url: str, access_token: str, job_id: str) -> dic
 def main() -> int:
     print("Supabase URL:", SUPABASE_URL)
     print("Email:", SUPABASE_EMAIL)
-    api_base_url = (
-        input("Discovery API base URL [http://127.0.0.1:8080]: ").strip()
-        or "http://127.0.0.1:8080"
-    )
-    password = getpass.getpass("Supabase password: ")
+    password = sys.argv[1] if len(sys.argv) > 1 else getpass.getpass("Supabase password: ")
     intent = input("Discovery intent: ").strip()
     if not intent:
         print("Intent is required.")
@@ -113,9 +110,9 @@ def main() -> int:
         print("Getting Supabase access token...")
         access_token = get_supabase_access_token(password)
         print("Starting discovery job...")
-        job_id = start_discovery_job(api_base_url, access_token, intent)
+        job_id = start_discovery_job(DISCOVERY_API_BASE_URL, access_token, intent)
         print("Started job:", job_id)
-        final_payload = poll_discovery_job(api_base_url, access_token, job_id)
+        final_payload = poll_discovery_job(DISCOVERY_API_BASE_URL, access_token, job_id)
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return 1
