@@ -18,6 +18,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from typing import Any
 
 SUPABASE_URL = "https://uaizrqhyomcgaowjetyd.supabase.co"
 SUPABASE_PUBLISHABLE_KEY = "sb_publishable_DSZ2FtoAtzUbMitch1yaMA_L_P1CsPK"
@@ -62,6 +63,36 @@ def get_supabase_access_token(password: str) -> str:
     if not access_token:
         raise RuntimeError(f"Supabase token response missing access_token: {response}")
     return access_token
+
+
+def extract_base_domain(raw_url: str) -> str:
+    candidate = (raw_url or "").strip()
+    if not candidate:
+        return ""
+    if "://" not in candidate:
+        candidate = f"https://{candidate}"
+    parsed = urllib.parse.urlparse(candidate)
+    host = (parsed.netloc or "").lower()
+    if "@" in host:
+        host = host.split("@", 1)[1]
+    if ":" in host:
+        host = host.split(":", 1)[0]
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
+def get_user_sources(access_token: str) -> list[dict[str, Any]]:
+    url = f"{SUPABASE_URL}/rest/v1/sources?select=url"
+    headers = {
+        "apikey": SUPABASE_PUBLISHABLE_KEY,
+        "Authorization": f"Bearer {access_token}",
+        "Accept": "application/json",
+    }
+    response = _http_json("GET", url, headers=headers)
+    if not isinstance(response, list):
+        raise RuntimeError(f"Unexpected sources response shape: {response}")
+    return response
 
 
 def start_discovery_job(api_base_url: str, access_token: str, intent: str) -> str:
@@ -109,6 +140,16 @@ def main() -> int:
     try:
         print("Getting Supabase access token...")
         access_token = get_supabase_access_token(password)
+        print("Loading current user sources...")
+        user_sources = get_user_sources(access_token)
+        existing_domains: dict[str, list[str]] = {}
+        for source in user_sources:
+            source_url = str(source.get("url", "")).strip()
+            domain = extract_base_domain(source_url)
+            if not domain:
+                continue
+            existing_domains.setdefault(domain, []).append(source_url)
+
         print("Starting discovery job...")
         job_id = start_discovery_job(DISCOVERY_API_BASE_URL, access_token, intent)
         print("Started job:", job_id)
@@ -116,6 +157,19 @@ def main() -> int:
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+
+    result = final_payload.get("result")
+    suggestions = result.get("suggestions") if isinstance(result, dict) else None
+    if isinstance(suggestions, list):
+        for suggestion in suggestions:
+            if not isinstance(suggestion, dict):
+                continue
+            suggestion_url = str(suggestion.get("url", "")).strip()
+            suggestion_domain = extract_base_domain(suggestion_url)
+            matches = existing_domains.get(suggestion_domain, [])
+            suggestion["base_domain"] = suggestion_domain
+            suggestion["already_in_user_sources"] = bool(matches)
+            suggestion["matching_user_source_urls"] = matches
 
     print("\nFinal payload:")
     print(json.dumps(final_payload, indent=2))
