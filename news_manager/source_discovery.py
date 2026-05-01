@@ -206,6 +206,14 @@ def discover_sources(
 
     search_query = _build_seed_query(intent)
     rows = ddg_text_search(search_query, max_results=_MAX_SEARCH_RESULTS, region=locale)
+    logger.info(
+        "discover: start intent=%r locale=%r requested_max=%s capped_max=%s seed_rows=%s",
+        intent,
+        locale,
+        max_results,
+        capped_max_results,
+        len(rows),
+    )
 
     suggestions: list[dict[str, str]] = []
     seen_suggestion_urls: set[str] = set()
@@ -213,15 +221,37 @@ def discover_sources(
     seen_classification_urls: set[str] = set()
     classified_count = 0
 
-    def _try_add_suggestion(classified: _ClassifiedPage) -> None:
+    def _try_add_suggestion(classified: _ClassifiedPage, *, context: str) -> None:
         final_url_key = classified.url.lower()
         if final_url_key in excluded_urls:
+            logger.info(
+                "discover: reject suggestion context=%s url=%s reason=excluded_url",
+                context,
+                classified.url,
+            )
             return
         if classified.base_domain and classified.base_domain in excluded_hosts:
+            logger.info(
+                "discover: reject suggestion context=%s url=%s domain=%s reason=excluded_domain",
+                context,
+                classified.url,
+                classified.base_domain,
+            )
             return
         if final_url_key in seen_suggestion_urls:
+            logger.info(
+                "discover: reject suggestion context=%s url=%s reason=duplicate_url",
+                context,
+                classified.url,
+            )
             return
         if classified.base_domain and classified.base_domain in seen_suggestion_domains:
+            logger.info(
+                "discover: reject suggestion context=%s url=%s domain=%s reason=duplicate_domain",
+                context,
+                classified.url,
+                classified.base_domain,
+            )
             return
         suggestions.append(
             {
@@ -235,47 +265,102 @@ def discover_sources(
         seen_suggestion_urls.add(final_url_key)
         if classified.base_domain:
             seen_suggestion_domains.add(classified.base_domain)
+        logger.info(
+            "discover: accept suggestion context=%s url=%s domain=%s classification=%s",
+            context,
+            classified.url,
+            classified.base_domain,
+            classified.classification,
+        )
 
     seed_seen: set[str] = set()
     for row in rows:
         if len(suggestions) >= capped_max_results:
+            logger.info("discover: early stop reason=max_suggestions_reached count=%s", len(suggestions))
             break
         href = _scrub_url((row.get("href") or "").strip())
         if not href or not url_fetch_allowed(href):
+            if href:
+                logger.info("discover: skip seed url=%s reason=url_not_allowed", href)
             continue
         seed_key = href.lower()
         if seed_key in seed_seen:
+            logger.info("discover: skip seed url=%s reason=duplicate_seed", href)
             continue
         seed_seen.add(seed_key)
         if seed_key in seen_classification_urls:
+            logger.info("discover: skip seed url=%s reason=already_classified", href)
             continue
         seen_classification_urls.add(seed_key)
 
         classified = _classify_page_meta(href, intent)
         classified_count += 1
         if classified is None:
+            logger.info("discover: classification failed url=%s", href)
             continue
+        logger.info(
+            "discover: classified seed url=%s classification=%s reason=%s",
+            classified.url,
+            classified.classification,
+            classified.reason,
+        )
         if classified.classification in {"blog home", "news home"}:
-            _try_add_suggestion(classified)
+            _try_add_suggestion(classified, context="seed")
             continue
         if classified.classification == "other":
+            logger.info("discover: reject seed url=%s reason=classification_other", classified.url)
             continue
         if classified.classification != "article":
+            logger.info(
+                "discover: reject seed url=%s reason=unexpected_classification value=%s",
+                classified.url,
+                classified.classification,
+            )
             continue
-        for rec_url in _article_recommendations(classified.url, classified.content):
+        rec_urls = _article_recommendations(classified.url, classified.content)
+        logger.info(
+            "discover: follow article url=%s recommended_count=%s",
+            classified.url,
+            len(rec_urls),
+        )
+        for rec_url in rec_urls:
             if len(suggestions) >= capped_max_results:
+                logger.info(
+                    "discover: early stop in recommendations reason=max_suggestions_reached count=%s",
+                    len(suggestions),
+                )
                 break
             rec_key = rec_url.lower()
             if rec_key in seen_classification_urls:
+                logger.info("discover: skip recommended url=%s reason=already_classified", rec_url)
                 continue
             seen_classification_urls.add(rec_key)
             rec_classified = _classify_page_meta(rec_url, intent)
             classified_count += 1
             if rec_classified is None:
+                logger.info("discover: classification failed recommended_url=%s", rec_url)
                 continue
+            logger.info(
+                "discover: classified recommended url=%s classification=%s reason=%s",
+                rec_classified.url,
+                rec_classified.classification,
+                rec_classified.reason,
+            )
             if rec_classified.classification in {"blog home", "news home"}:
-                _try_add_suggestion(rec_classified)
+                _try_add_suggestion(rec_classified, context="article_recommendation")
+            else:
+                logger.info(
+                    "discover: reject recommended url=%s reason=classification_not_home value=%s",
+                    rec_classified.url,
+                    rec_classified.classification,
+                )
 
+    logger.info(
+        "discover: complete suggestions=%s candidates_considered=%s excluded_existing=%s",
+        len(suggestions),
+        classified_count,
+        len(excluded_urls),
+    )
     return {
         "ok": True,
         "suggestions": suggestions,
