@@ -15,7 +15,7 @@ from news_manager.llm import get_client
 
 SYSTEM_PROMPT = (
     "You are a classifer.  given a URL, meta tags and title, determine if this web page "
-    "is a blog post or a home page or neither"
+    "is a blog post or a blog home page or news home page or neither"
 )
 
 
