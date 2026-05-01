@@ -35,6 +35,7 @@ from news_manager.source_discovery_jobs import (
 )
 from news_manager.source_resolve import resolve_source_json_body
 from news_manager.supabase_sync import create_supabase_client
+from news_manager.supabase_sync import fetch_user_source_urls
 from news_manager.user_sources_catalog import import_user_sources_catalog
 
 logger = logging.getLogger(__name__)
@@ -311,6 +312,22 @@ def create_app() -> Flask:
         if parse_err is not None:
             return parse_err
         assert params is not None
+        try:
+            sb = create_supabase_client()
+            existing_urls = fetch_user_source_urls(sb, auth_user_id)
+        except ValueError as e:
+            return _json_error(str(e), status=503, error="server_misconfigured")
+        except RuntimeError as e:
+            logger.warning("source discovery preload failed for user_id=%s: %s", auth_user_id, e)
+            return _json_error("Failed to load existing sources.", status=500, error="discover_failed")
+
+        params = SourceDiscoveryParams(
+            user_id=params.user_id,
+            query=params.query,
+            locale=params.locale,
+            max_results=params.max_results,
+            existing_source_urls=tuple(existing_urls),
+        )
 
         job = start_source_discovery_job(params=params)
         return jsonify({"ok": True, "job_id": job["job_id"], "status": job["status"]}), 202

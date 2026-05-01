@@ -42,6 +42,20 @@ def create_supabase_client() -> Any:
     return create_client(url, key)
 
 
+def fetch_user_source_urls(client: Any, user_id: str) -> list[str]:
+    """All configured source URLs for one user."""
+    try:
+        r = client.table("sources").select("url").eq("user_id", user_id).execute()
+    except Exception as e:
+        raise RuntimeError(f"Supabase fetch user source URLs failed: {e}") from e
+    out: list[str] = []
+    for row in r.data or []:
+        url = row.get("url")
+        if isinstance(url, str) and url.strip():
+            out.append(url.strip())
+    return out
+
+
 # --- Gistprism v2 (user_id + category_id; see gistprism_v2_implementation_plan.md) ---
 
 

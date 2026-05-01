@@ -103,7 +103,21 @@ Malformed JSON or missing `query` → **400** with `ok: false`, `error: "no_resu
 
 ## `POST /api/sources/discover`
 
-**Purpose:** Start an async source-discovery job that transforms a plain-English user intent into a ranked list of source suggestions.
+**Purpose:** Start an async source-discovery job that transforms a plain-English user intent into source suggestions.
+
+Current discovery algorithm:
+
+1. Build DDG seed query exactly as: `blogs or news sites about <intent>`.
+2. Run DDG text search and process result URLs depth-first.
+3. For each URL, fetch HTML, extract `<body>` text, and classify with LLM into:
+   - `irrelevant`
+   - `follow`
+   - `is_index`
+4. If classification is `follow`, extract child links and recurse exactly one level.
+5. If classification is `is_index`, include the page as a suggestion (unless excluded by existing user sources).
+6. Stop once 5 suggestions are collected (even if `max_results` requested is higher), or when traversal is exhausted.
+
+The server still preloads the caller's existing source URLs from `public.sources` and excludes matching URLs/domains.
 
 **Auth:** **Required** — same **`Authorization: Bearer`** behavior as other protected routes.
 
@@ -131,6 +145,8 @@ Malformed JSON or missing `query` → **400** with `ok: false`, `error: "no_resu
 |--------|---------|------|
 | 400 | `no_results` | Body missing/invalid fields (for example non-string `query`, non-integer `max_results`). |
 | 401 | `no_results` | Missing/invalid token, or missing required `sub`. |
+| 500 | `discover_failed` | Existing-source preload failed unexpectedly. |
+| 503 | `server_misconfigured` | `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` missing for existing-source preload. |
 
 ---
 
@@ -153,21 +169,25 @@ Malformed JSON or missing `query` → **400** with `ok: false`, `error: "no_resu
     "user_id": "<jwt_sub>",
     "query": "privacy and security newsletters",
     "locale": null,
-    "max_results": 5
+    "max_results": 5,
+    "existing_source_urls_count": 17
   },
   "result": {
     "ok": true,
     "suggestions": [
       {
-        "name": "Example Source",
+        "title": "Example Source",
         "url": "https://example.com/",
-        "why": "Relevant to your requested topic."
+        "base_domain": "example.com",
+        "classification": "is_index",
+        "reason": "Homepage-like article index structure with recent posts."
       }
     ],
     "meta": {
       "query": "privacy and security newsletters",
       "candidates_considered": 12,
-      "max_results": 5
+      "max_results": 5,
+      "excluded_existing": 17
     }
   },
   "error": null
@@ -180,9 +200,11 @@ Suggestion field semantics:
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `name` | string | Display name for the source. |
-| `url` | string | Primary discovered site URL selected by discovery ranking. |
-| `why` | string | Short rationale for why the source matches user intent. |
+| `title` | string | `<title>` extracted from fetched HTML (fallbacks to domain when needed). |
+| `url` | string | Final discovered URL (scrubbed and safety-filtered). |
+| `base_domain` | string | Domain normalized from `url` (for dedupe/exclusion visibility). |
+| `classification` | string | Current accepted label for suggestions; today this is `is_index`. |
+| `reason` | string | LLM rationale for classification decision. |
 
 **Errors:**
 

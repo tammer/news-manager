@@ -1,29 +1,49 @@
-"""Discover candidate sources from a plain-English query."""
+"""Discover source homepages from a plain-English intent."""
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 import logging
+from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
+from news_manager.discovery_prompts import (
+    DISCOVERY_CLASSIFICATION_ALLOWED,
+    DISCOVERY_CLASSIFICATION_PROMPT,
+    build_discovery_classification_user_prompt,
+)
 from news_manager.source_resolve import (
     _chat_json,
-    _collect_candidates_from_query,
     _scrub_url,
+    ddg_text_search,
     fetch_html_limited,
     url_fetch_allowed,
 )
 
 logger = logging.getLogger(__name__)
 
-_MAX_SEARCH_RESULTS = 25
-_MAX_CANDIDATES_FOR_LLM = 12
-_MAX_FETCHED_PAGES = 5
-_MAX_FETCH_WORKERS = 3
-_MAX_HTML_SNIPPET = 1200
+_MAX_SEARCH_RESULTS = 30
+_MAX_BODY_TEXT_FOR_LLM = 12000
+_MAX_VISITED_PAGES = 60
+_MAX_CHILD_LINKS = 12
+
+
+@dataclass(frozen=True)
+class _TraversalCandidate:
+    url: str
+    depth: int
+
+
+@dataclass(frozen=True)
+class _ClassifiedPage:
+    title: str
+    url: str
+    base_domain: str
+    content: str
+    classification: str
+    reason: str
 
 
 def _domain_name(url: str) -> str:
@@ -33,111 +53,77 @@ def _domain_name(url: str) -> str:
     return host
 
 
-def _extract_page_hint(html: str) -> str:
+def _build_seed_query(intent: str) -> str:
+    return f"blogs or news sites about {intent.strip()}"
+
+
+def _extract_title(html: str) -> str:
     soup = BeautifulSoup(html, "lxml")
     title = " ".join(((soup.title.string or "").split())) if soup.title and soup.title.string else ""
-    desc = ""
-    m = soup.find("meta", attrs={"name": "description"})
-    if m and isinstance(m.get("content"), str):
-        desc = " ".join(str(m["content"]).split())
-    joined = " | ".join(x for x in (title, desc) if x)
-    return joined[:_MAX_HTML_SNIPPET]
+    return title
 
 
-def _dedupe_candidates(rows: list[dict[str, str]]) -> list[dict[str, str]]:
-    out: list[dict[str, str]] = []
+def _extract_body_text(html: str) -> str:
+    soup = BeautifulSoup(html, "lxml")
+    body = soup.body if soup.body is not None else soup
+    text = " ".join(body.get_text(separator=" ", strip=True).split())
+    return text[:_MAX_BODY_TEXT_FOR_LLM]
+
+
+def _extract_child_urls(html: str, base_url: str) -> list[str]:
+    soup = BeautifulSoup(html, "lxml")
+    out: list[str] = []
     seen: set[str] = set()
-    for row in rows:
-        href = _scrub_url((row.get("href") or "").strip())
-        if not href or not url_fetch_allowed(href):
+    for anchor in soup.find_all("a", href=True):
+        href = anchor.get("href")
+        if not isinstance(href, str):
             continue
-        key = href.lower()
-        host = _domain_name(href)
-        if key in seen or (host and host in seen):
+        raw_href = href.strip()
+        if not raw_href or raw_href.startswith("#"):
+            continue
+        if raw_href.lower().startswith(("javascript:", "mailto:", "tel:")):
+            continue
+        candidate_url = _scrub_url(urljoin(base_url, raw_href))
+        if not url_fetch_allowed(candidate_url):
+            continue
+        key = candidate_url.lower()
+        if key in seen:
             continue
         seen.add(key)
-        if host:
-            seen.add(host)
-        out.append(
-            {
-                "title": (row.get("title") or "").strip(),
-                "href": href,
-                "body": (row.get("body") or "").strip(),
-            }
-        )
-    return out
-
-
-def _llm_rank_suggestions(query: str, candidates: list[dict[str, str]], max_results: int) -> list[dict[str, str]]:
-    lines: list[str] = []
-    for i, c in enumerate(candidates[:_MAX_CANDIDATES_FOR_LLM]):
-        lines.append(
-            (
-                f"{i + 1}. url={c.get('href')!r} "
-                f"title={c.get('title', '')!r} "
-                f"snippet={c.get('body', '')!r} "
-                f"page_hint={c.get('page_hint', '')!r}"
-            )
-        )
-    if not lines:
-        return []
-
-    system = (
-        "You recommend reputable sources that match a user's desired feed interests. "
-        "Return JSON only with this exact shape: "
-        '{"suggestions":[{"name":"string","url":"https://...","why":"short reason"}]}. '
-        "Pick unique domains only. Use only URLs from candidates. "
-        "Keep 'why' concise and concrete."
-    )
-    user = (
-        f"User intent: {query!r}\n"
-        f"Return at most {max_results} suggestions.\n\n"
-        "Candidates:\n" + "\n".join(lines)
-    )
-    data = _chat_json(system, user)
-    if not isinstance(data, dict):
-        return []
-    raw = data.get("suggestions")
-    if not isinstance(raw, list):
-        return []
-
-    allowed_urls = {c["href"] for c in candidates if c.get("href")}
-    out: list[dict[str, str]] = []
-    seen_hosts: set[str] = set()
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        name = str(item.get("name") or "").strip()
-        url = _scrub_url(str(item.get("url") or "").strip())
-        why = str(item.get("why") or "").strip()
-        if not url or url not in allowed_urls or not url_fetch_allowed(url):
-            continue
-        host = _domain_name(url)
-        if host and host in seen_hosts:
-            continue
-        if host:
-            seen_hosts.add(host)
-        out.append(
-            {
-                "name": name or host or "Unknown source",
-                "url": url,
-                "why": why or "Matches your requested topic and appears to publish relevant articles.",
-            }
-        )
-        if len(out) >= max_results:
+        out.append(candidate_url)
+        if len(out) >= _MAX_CHILD_LINKS:
             break
     return out
 
 
-def _fetch_candidate_hint(url: str) -> tuple[str | None, str | None]:
+def _classify_url(url: str, intent: str) -> _ClassifiedPage | None:
     try:
         html, final_url, _err = fetch_html_limited(url)
     except Exception:
-        logger.debug("candidate fetch failed for %s", url, exc_info=True)
-        return None, None
+        logger.debug("classification fetch failed for %s", url, exc_info=True)
+        return None
     if not html or not final_url:
-        return None, None
-    return _scrub_url(final_url), _extract_page_hint(html)
+        return None
+    final_scrubbed = _scrub_url(final_url)
+    if not url_fetch_allowed(final_scrubbed):
+        return None
+    body_text = _extract_body_text(html)
+    user_prompt = build_discovery_classification_user_prompt(intent=intent, url=final_scrubbed, body_text=body_text)
+    data = _chat_json(DISCOVERY_CLASSIFICATION_PROMPT, user_prompt)
+    if not isinstance(data, dict):
+        return None
+    classification = str(data.get("classification") or "").strip().lower()
+    reason = str(data.get("reason") or "").strip()
+    if classification not in DISCOVERY_CLASSIFICATION_ALLOWED:
+        return None
+    return _ClassifiedPage(
+        title=_extract_title(html),
+        url=final_scrubbed,
+        base_domain=_domain_name(final_scrubbed),
+        content=html,
+        classification=classification,
+        reason=reason or "No reason provided.",
+    )
 
 
 def discover_sources(
@@ -145,49 +131,98 @@ def discover_sources(
     *,
     locale: str | None = None,
     max_results: int = 5,
+    excluded_source_urls: set[str] | None = None,
 ) -> dict[str, Any]:
-    q = query.strip()
-    if not q:
+    intent = query.strip()
+    if not intent:
         raise ValueError("'query' must be a non-empty string.")
     if max_results < 1:
         raise ValueError("'max_results' must be at least 1.")
 
-    search_cap = max(5, min(_MAX_SEARCH_RESULTS, max_results * 4))
-    rows = _collect_candidates_from_query(q, max_results=search_cap, region=locale)
-    candidates = _dedupe_candidates(rows)
-    if not candidates:
-        return {"ok": True, "suggestions": [], "meta": {"candidates_considered": 0}}
+    capped_max_results = min(max_results, 5)
+    excluded_source_urls = excluded_source_urls or set()
+    excluded_urls = {_scrub_url(u).lower() for u in excluded_source_urls if isinstance(u, str) and u.strip()}
+    excluded_hosts = {_domain_name(u) for u in excluded_source_urls if isinstance(u, str) and u.strip()}
+    excluded_hosts.discard("")
 
-    candidates_to_fetch = candidates[:_MAX_FETCHED_PAGES]
-    worker_count = min(_MAX_FETCH_WORKERS, len(candidates_to_fetch))
-    if worker_count > 0:
-        with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            fetched = executor.map(_fetch_candidate_hint, (c["href"] for c in candidates_to_fetch))
-            for candidate, (final_url, page_hint) in zip(candidates_to_fetch, fetched):
-                if not final_url or not page_hint:
+    search_query = _build_seed_query(intent)
+    rows = ddg_text_search(search_query, max_results=_MAX_SEARCH_RESULTS, region=locale)
+
+    stack: list[_TraversalCandidate] = []
+    seed_seen: set[str] = set()
+    for row in reversed(rows):
+        href = _scrub_url((row.get("href") or "").strip())
+        if not href or not url_fetch_allowed(href):
+            continue
+        key = href.lower()
+        if key in seed_seen:
+            continue
+        seed_seen.add(key)
+        stack.append(_TraversalCandidate(url=href, depth=0))
+
+    suggestions: list[dict[str, str]] = []
+    seen_suggestion_urls: set[str] = set()
+    seen_suggestion_domains: set[str] = set()
+    visited_urls: set[str] = set()
+    classified_count = 0
+
+    while stack and len(suggestions) < capped_max_results and classified_count < _MAX_VISITED_PAGES:
+        node = stack.pop()
+        url_key = node.url.lower()
+        if url_key in visited_urls:
+            continue
+        visited_urls.add(url_key)
+
+        classified = _classify_url(node.url, intent)
+        classified_count += 1
+        if classified is None:
+            continue
+
+        final_url_key = classified.url.lower()
+        if final_url_key in visited_urls:
+            visited_urls.add(final_url_key)
+
+        if classified.classification == "follow" and node.depth == 0:
+            child_urls = _extract_child_urls(classified.content, classified.url)
+            for child in reversed(child_urls):
+                child_key = child.lower()
+                if child_key in visited_urls:
                     continue
-                candidate["href"] = final_url
-                candidate["page_hint"] = page_hint
+                stack.append(_TraversalCandidate(url=child, depth=1))
+            continue
 
-    suggestions = _llm_rank_suggestions(q, candidates, max_results=max_results)
-    if not suggestions:
-        suggestions = []
-        for c in candidates[:max_results]:
-            host = _domain_name(c["href"])
-            suggestions.append(
-                {
-                    "name": c["title"] or host or "Unknown source",
-                    "url": c["href"],
-                    "why": "Appears relevant to your query based on search context.",
-                }
-            )
+        if classified.classification != "is_index":
+            continue
+
+        if final_url_key in excluded_urls:
+            continue
+        if classified.base_domain and classified.base_domain in excluded_hosts:
+            continue
+        if final_url_key in seen_suggestion_urls:
+            continue
+        if classified.base_domain and classified.base_domain in seen_suggestion_domains:
+            continue
+        suggestions.append(
+            {
+                "title": classified.title or classified.base_domain or "Unknown source",
+                "url": classified.url,
+                "base_domain": classified.base_domain,
+                "classification": classified.classification,
+                "reason": classified.reason,
+            }
+        )
+        seen_suggestion_urls.add(final_url_key)
+        if classified.base_domain:
+            seen_suggestion_domains.add(classified.base_domain)
 
     return {
         "ok": True,
         "suggestions": suggestions,
         "meta": {
-            "query": q,
-            "candidates_considered": len(candidates),
-            "max_results": max_results,
+            "query": intent,
+            "search_query": search_query,
+            "candidates_considered": classified_count,
+            "max_results": capped_max_results,
+            "excluded_existing": len(excluded_urls),
         },
     }

@@ -12,7 +12,6 @@ import pytest
 
 from news_manager.resolve_app import create_app
 from news_manager.source_discovery import discover_sources
-from news_manager.source_resolve import _collect_candidates_from_query
 from news_manager.source_discovery_jobs import (
     SourceDiscoveryParams,
     get_source_discovery_job,
@@ -61,8 +60,14 @@ def test_source_discover_status_401_without_token(jwt_secret: str) -> None:
     assert r.status_code == 401
 
 
+@patch("news_manager.resolve_app.fetch_user_source_urls")
+@patch("news_manager.resolve_app.create_supabase_client")
 @patch("news_manager.resolve_app.start_source_discovery_job")
-def test_source_discover_start_202_and_params_mapped(mock_start_job: Any, jwt_secret: str) -> None:
+def test_source_discover_start_202_and_params_mapped(
+    mock_start_job: Any, mock_create_sb: Any, mock_fetch_urls: Any, jwt_secret: str
+) -> None:
+    mock_create_sb.return_value = object()
+    mock_fetch_urls.return_value = ["https://already-have.example/"]
     mock_start_job.return_value = {"job_id": "job-123", "status": "queued"}
     c = _new_client()
     headers = _authed_headers(jwt_secret, sub="user-123")
@@ -79,6 +84,45 @@ def test_source_discover_start_202_and_params_mapped(mock_start_job: Any, jwt_se
     assert params.query == "indie tech blogs"
     assert params.locale == "us-en"
     assert params.max_results == 7
+    assert params.existing_source_urls == ("https://already-have.example/",)
+
+
+@patch("news_manager.resolve_app.create_supabase_client")
+def test_source_discover_start_503_when_supabase_not_configured(
+    mock_create_sb: Any, jwt_secret: str
+) -> None:
+    mock_create_sb.side_effect = ValueError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set.")
+    c = _new_client()
+    headers = _authed_headers(jwt_secret, sub="user-123")
+    r = c.post(
+        "/api/sources/discover",
+        json={"query": "indie tech blogs"},
+        headers=headers,
+    )
+    assert r.status_code == 503
+    payload = r.get_json()
+    assert payload["ok"] is False
+    assert payload["error"] == "server_misconfigured"
+
+
+@patch("news_manager.resolve_app.fetch_user_source_urls")
+@patch("news_manager.resolve_app.create_supabase_client")
+def test_source_discover_start_500_when_existing_sources_lookup_fails(
+    mock_create_sb: Any, mock_fetch_urls: Any, jwt_secret: str
+) -> None:
+    mock_create_sb.return_value = object()
+    mock_fetch_urls.side_effect = RuntimeError("boom")
+    c = _new_client()
+    headers = _authed_headers(jwt_secret, sub="user-123")
+    r = c.post(
+        "/api/sources/discover",
+        json={"query": "indie tech blogs"},
+        headers=headers,
+    )
+    assert r.status_code == 500
+    payload = r.get_json()
+    assert payload["ok"] is False
+    assert payload["error"] == "discover_failed"
 
 
 def test_source_discover_start_400_for_invalid_max_results(jwt_secret: str) -> None:
@@ -223,59 +267,192 @@ def test_source_discovery_jobs_async_lifecycle_failure() -> None:
 
 @patch("news_manager.source_discovery._chat_json")
 @patch("news_manager.source_discovery.fetch_html_limited")
-@patch("news_manager.source_discovery._collect_candidates_from_query")
-def test_discover_sources_fallback_when_llm_invalid(
-    mock_collect: Any,
+@patch("news_manager.source_discovery.ddg_text_search")
+def test_discover_sources_uses_required_seed_query(
+    mock_ddg: Any,
     mock_fetch: Any,
     mock_chat: Any,
 ) -> None:
-    mock_collect.return_value = [
-        {"title": "EFF", "href": "https://www.eff.org/", "body": "Digital rights."},
-        {"title": "Krebs", "href": "https://krebsonsecurity.com/", "body": "Security investigations."},
-    ]
-    mock_fetch.return_value = ("<html><title>Site</title></html>", "https://www.eff.org/", None)
-    mock_chat.return_value = {"oops": "bad shape"}
-    out = discover_sources("privacy news", max_results=2)
-    assert out["ok"] is True
-    assert len(out["suggestions"]) == 2
-    for item in out["suggestions"]:
-        assert isinstance(item["name"], str)
-        assert isinstance(item["url"], str)
-        assert isinstance(item["why"], str)
+    mock_ddg.return_value = [{"title": "Seed", "href": "https://seed.example/", "body": ""}]
+    mock_fetch.return_value = ("<html><title>Seed</title><body>hello</body></html>", "https://seed.example/", None)
+    mock_chat.return_value = {"classification": "irrelevant", "reason": "Not index."}
+
+    discover_sources("privacy security", locale="us-en", max_results=3)
+
+    mock_ddg.assert_called_once_with(
+        "blogs or news sites about privacy security",
+        max_results=30,
+        region="us-en",
+    )
 
 
 @patch("news_manager.source_discovery._chat_json")
 @patch("news_manager.source_discovery.fetch_html_limited")
-@patch("news_manager.source_discovery._collect_candidates_from_query")
-def test_discover_sources_filters_unsafe_llm_urls(
-    mock_collect: Any,
+@patch("news_manager.source_discovery.ddg_text_search")
+def test_discover_sources_depth_first_with_follow_once(
+    mock_ddg: Any,
     mock_fetch: Any,
     mock_chat: Any,
 ) -> None:
-    mock_collect.return_value = [
-        {"title": "EFF", "href": "https://www.eff.org/", "body": "Digital rights."},
+    mock_ddg.return_value = [
+        {"title": "seed-a", "href": "https://seed-a.example/", "body": ""},
+        {"title": "seed-b", "href": "https://seed-b.example/", "body": ""},
     ]
-    mock_fetch.return_value = ("<html><title>EFF</title></html>", "https://www.eff.org/", None)
-    mock_chat.return_value = {
-        "suggestions": [
-            {"name": "Bad", "url": "https://127.0.0.1/private", "why": "Nope"},
-            {"name": "EFF", "url": "https://www.eff.org/", "why": "Good"},
-        ]
-    }
-    out = discover_sources("privacy news", max_results=3)
+
+    def _fetch_side_effect(url: str) -> tuple[str | None, str | None, dict[str, Any] | None]:
+        if url == "https://seed-a.example/":
+            return ("<html><title>A</title><body>seed a</body></html>", url, None)
+        if url == "https://seed-b.example/":
+            return (
+                "<html><title>B</title><body>"
+                '<a href="https://child-1.example/">child1</a>'
+                '<a href="https://child-2.example/">child2</a>'
+                "</body></html>",
+                url,
+                None,
+            )
+        return (f"<html><title>{url}</title><body>child</body></html>", url, None)
+
+    mock_fetch.side_effect = _fetch_side_effect
+    mock_chat.side_effect = [
+        {"classification": "irrelevant", "reason": "A is irrelevant"},
+        {"classification": "follow", "reason": "B is an aggregator"},
+        {"classification": "is_index", "reason": "Child 1 is a homepage"},
+        {"classification": "is_index", "reason": "Child 2 is a homepage"},
+    ]
+
+    out = discover_sources("book reviews", max_results=2)
+
     assert out["ok"] is True
+    assert [item["url"] for item in out["suggestions"]] == [
+        "https://child-1.example/",
+        "https://child-2.example/",
+    ]
+    assert out["suggestions"][0]["classification"] == "is_index"
+
+
+@patch("news_manager.source_discovery._chat_json")
+@patch("news_manager.source_discovery.fetch_html_limited")
+@patch("news_manager.source_discovery.ddg_text_search")
+def test_discover_sources_follow_only_recurses_once(
+    mock_ddg: Any,
+    mock_fetch: Any,
+    mock_chat: Any,
+) -> None:
+    mock_ddg.return_value = [{"title": "Seed", "href": "https://seed.example/", "body": ""}]
+
+    def _fetch_side_effect(url: str) -> tuple[str | None, str | None, dict[str, Any] | None]:
+        if url == "https://seed.example/":
+            return ('<html><body><a href="https://child.example/">child</a></body></html>', url, None)
+        if url == "https://child.example/":
+            return ('<html><body><a href="https://grandchild.example/">grand</a></body></html>', url, None)
+        return ("<html><body>grandchild</body></html>", url, None)
+
+    mock_fetch.side_effect = _fetch_side_effect
+    mock_chat.side_effect = [
+        {"classification": "follow", "reason": "seed follow"},
+        {"classification": "follow", "reason": "child follow too"},
+    ]
+
+    out = discover_sources("topic", max_results=5)
+    assert out["ok"] is True
+    assert out["suggestions"] == []
+    fetched_urls = [call.args[0] for call in mock_fetch.call_args_list]
+    assert "https://grandchild.example/" not in fetched_urls
+
+
+@patch("news_manager.source_discovery._chat_json")
+@patch("news_manager.source_discovery.fetch_html_limited")
+@patch("news_manager.source_discovery.ddg_text_search")
+def test_discover_sources_stops_at_five_results_even_if_higher_requested(
+    mock_ddg: Any,
+    mock_fetch: Any,
+    mock_chat: Any,
+) -> None:
+    mock_ddg.return_value = [
+        {"title": f"Seed{i}", "href": f"https://site{i}.example/", "body": ""}
+        for i in range(1, 8)
+    ]
+    mock_fetch.side_effect = lambda url: (f"<html><title>{url}</title><body>body</body></html>", url, None)
+    mock_chat.side_effect = [{"classification": "is_index", "reason": "homepage"} for _ in range(7)]
+
+    out = discover_sources("ai news", max_results=10)
+    assert len(out["suggestions"]) == 5
+    assert out["meta"]["max_results"] == 5
+
+
+@patch("news_manager.source_discovery._chat_json")
+@patch("news_manager.source_discovery.fetch_html_limited")
+@patch("news_manager.source_discovery.ddg_text_search")
+def test_discover_sources_excludes_existing_user_sources(
+    mock_ddg: Any,
+    mock_fetch: Any,
+    mock_chat: Any,
+) -> None:
+    mock_ddg.return_value = [
+        {"title": "Owned", "href": "https://owned.example/", "body": ""},
+        {"title": "New", "href": "https://new.example/", "body": ""},
+    ]
+    mock_fetch.side_effect = lambda url: (f"<html><title>{url}</title><body>body</body></html>", url, None)
+    mock_chat.side_effect = [
+        {"classification": "is_index", "reason": "owned"},
+        {"classification": "is_index", "reason": "new"},
+    ]
+
+    out = discover_sources("book reviews", max_results=2, excluded_source_urls={"https://owned.example/"})
     assert len(out["suggestions"]) == 1
-    assert out["suggestions"][0]["url"] == "https://www.eff.org/"
+    assert out["suggestions"][0]["url"] == "https://new.example/"
 
 
-@patch("news_manager.source_resolve.ddg_text_search")
-def test_collect_candidates_plain_english_uses_search_not_direct(mock_ddg: Any) -> None:
-    mock_ddg.return_value = [{"title": "EFF", "href": "https://www.eff.org/", "body": "Digital rights."}]
-    rows = _collect_candidates_from_query(
-        "independent cybersecurity and privacy news sources",
-        max_results=10,
-        region="us-en",
-    )
-    assert rows == mock_ddg.return_value
-    mock_ddg.assert_called_once()
-    assert mock_ddg.call_args.args[0] == "independent cybersecurity and privacy news sources blogs"
+@patch("news_manager.source_discovery._chat_json")
+@patch("news_manager.source_discovery.fetch_html_limited")
+@patch("news_manager.source_discovery.ddg_text_search")
+def test_discover_sources_ignores_invalid_llm_classification(
+    mock_ddg: Any,
+    mock_fetch: Any,
+    mock_chat: Any,
+) -> None:
+    mock_ddg.return_value = [{"title": "Bad", "href": "https://bad.example/", "body": ""}]
+    mock_fetch.return_value = ("<html><title>Bad</title><body>x</body></html>", "https://bad.example/", None)
+    mock_chat.return_value = {"classification": "unknown", "reason": "bad label"}
+
+    out = discover_sources("topic", max_results=3)
+    assert out["ok"] is True
+    assert out["suggestions"] == []
+
+
+@patch("news_manager.source_discovery._chat_json")
+@patch("news_manager.source_discovery.fetch_html_limited")
+@patch("news_manager.source_discovery.ddg_text_search")
+def test_discover_sources_result_payload_is_minimal(
+    mock_ddg: Any,
+    mock_fetch: Any,
+    mock_chat: Any,
+) -> None:
+    mock_ddg.return_value = [{"title": "Site", "href": "https://site.example/", "body": ""}]
+    mock_fetch.return_value = ("<html><title>Site</title><body>news body</body></html>", "https://site.example/", None)
+    mock_chat.return_value = {"classification": "is_index", "reason": "homepage layout"}
+
+    out = discover_sources("topic", max_results=1)
+    suggestion = out["suggestions"][0]
+    assert set(suggestion.keys()) == {"title", "url", "base_domain", "classification", "reason"}
+
+
+@patch("news_manager.source_discovery._chat_json")
+@patch("news_manager.source_discovery.fetch_html_limited")
+@patch("news_manager.source_discovery.ddg_text_search")
+def test_discover_sources_passes_intent_to_classifier_prompt(
+    mock_ddg: Any,
+    mock_fetch: Any,
+    mock_chat: Any,
+) -> None:
+    mock_ddg.return_value = [{"title": "Site", "href": "https://site.example/", "body": ""}]
+    mock_fetch.return_value = ("<html><title>Site</title><body>security content</body></html>", "https://site.example/", None)
+    mock_chat.return_value = {"classification": "irrelevant", "reason": "not aligned"}
+
+    discover_sources("cybersecurity news", max_results=1)
+
+    system_prompt = mock_chat.call_args.args[0]
+    user_prompt = mock_chat.call_args.args[1]
+    assert "Intent alignment is mandatory for \"is_index\"" in system_prompt
+    assert "Intent: cybersecurity news" in user_prompt
