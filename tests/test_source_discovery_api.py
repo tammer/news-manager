@@ -275,7 +275,7 @@ def test_discover_sources_uses_required_seed_query(
 ) -> None:
     mock_ddg.return_value = [{"title": "Seed", "href": "https://seed.example/", "body": ""}]
     mock_fetch.return_value = ("<html><title>Seed</title><body>hello</body></html>", "https://seed.example/", None)
-    mock_chat.return_value = {"classification": "irrelevant", "reason": "Not index."}
+    mock_chat.return_value = {"classification": "other", "reason": "Not relevant."}
 
     discover_sources("privacy security", locale="us-en", max_results=3)
 
@@ -289,52 +289,43 @@ def test_discover_sources_uses_required_seed_query(
 @patch("news_manager.source_discovery._chat_json")
 @patch("news_manager.source_discovery.fetch_html_limited")
 @patch("news_manager.source_discovery.ddg_text_search")
-def test_discover_sources_depth_first_with_follow_once(
+def test_discover_sources_article_recommendations_are_reclassified(
     mock_ddg: Any,
     mock_fetch: Any,
     mock_chat: Any,
 ) -> None:
     mock_ddg.return_value = [
-        {"title": "seed-a", "href": "https://seed-a.example/", "body": ""},
-        {"title": "seed-b", "href": "https://seed-b.example/", "body": ""},
+        {"title": "seed", "href": "https://seed.example/", "body": ""},
     ]
 
     def _fetch_side_effect(url: str) -> tuple[str | None, str | None, dict[str, Any] | None]:
-        if url == "https://seed-a.example/":
-            return ("<html><title>A</title><body>seed a</body></html>", url, None)
-        if url == "https://seed-b.example/":
-            return (
-                "<html><title>B</title><body>"
-                '<a href="https://child-1.example/">child1</a>'
-                '<a href="https://child-2.example/">child2</a>'
-                "</body></html>",
-                url,
-                None,
-            )
-        return (f"<html><title>{url}</title><body>child</body></html>", url, None)
+        if url == "https://seed.example/":
+            return ('<html><title>Seed story</title><body><a href="https://rec.example/page">rec</a></body></html>', url, None)
+        if url == "https://rec.example/page":
+            return ("<html><title>Rec Home</title><body>home</body></html>", url, None)
+        return ("<html><title>Unknown</title><body>none</body></html>", url, None)
 
     mock_fetch.side_effect = _fetch_side_effect
     mock_chat.side_effect = [
-        {"classification": "irrelevant", "reason": "A is irrelevant"},
-        {"classification": "follow", "reason": "B is an aggregator"},
-        {"classification": "is_index", "reason": "Child 1 is a homepage"},
-        {"classification": "is_index", "reason": "Child 2 is a homepage"},
+        {"classification": "article", "reason": "Single story."},
+        {
+            "recommended": [{"name": "Rec", "url": "https://rec.example/page"}],
+            "reasoning": "mentioned in article",
+        },
+        {"classification": "blog home", "reason": "Looks like a blog index."},
     ]
 
-    out = discover_sources("book reviews", max_results=2)
+    out = discover_sources("book reviews", max_results=1)
 
     assert out["ok"] is True
-    assert [item["url"] for item in out["suggestions"]] == [
-        "https://child-1.example/",
-        "https://child-2.example/",
-    ]
-    assert out["suggestions"][0]["classification"] == "is_index"
+    assert [item["url"] for item in out["suggestions"]] == ["https://rec.example/page"]
+    assert out["suggestions"][0]["classification"] == "blog home"
 
 
 @patch("news_manager.source_discovery._chat_json")
 @patch("news_manager.source_discovery.fetch_html_limited")
 @patch("news_manager.source_discovery.ddg_text_search")
-def test_discover_sources_follow_only_recurses_once(
+def test_discover_sources_uses_recommender_link_without_root_normalization(
     mock_ddg: Any,
     mock_fetch: Any,
     mock_chat: Any,
@@ -343,22 +334,27 @@ def test_discover_sources_follow_only_recurses_once(
 
     def _fetch_side_effect(url: str) -> tuple[str | None, str | None, dict[str, Any] | None]:
         if url == "https://seed.example/":
-            return ('<html><body><a href="https://child.example/">child</a></body></html>', url, None)
-        if url == "https://child.example/":
-            return ('<html><body><a href="https://grandchild.example/">grand</a></body></html>', url, None)
-        return ("<html><body>grandchild</body></html>", url, None)
+            return ("<html><title>seed</title><body>story</body></html>", url, None)
+        if url == "https://example.com/path/to/page":
+            return ("<html><title>section home</title><body>index</body></html>", url, None)
+        return ("<html><title>other</title><body>none</body></html>", url, None)
 
     mock_fetch.side_effect = _fetch_side_effect
     mock_chat.side_effect = [
-        {"classification": "follow", "reason": "seed follow"},
-        {"classification": "follow", "reason": "child follow too"},
+        {"classification": "article", "reason": "article"},
+        {
+            "recommended": [{"name": "Exact", "url": "https://example.com/path/to/page"}],
+            "reasoning": "linked directly",
+        },
+        {"classification": "news home", "reason": "home"},
     ]
 
-    out = discover_sources("topic", max_results=5)
+    out = discover_sources("topic", max_results=1)
     assert out["ok"] is True
-    assert out["suggestions"] == []
+    assert out["suggestions"][0]["url"] == "https://example.com/path/to/page"
     fetched_urls = [call.args[0] for call in mock_fetch.call_args_list]
-    assert "https://grandchild.example/" not in fetched_urls
+    assert "https://example.com/path/to/page" in fetched_urls
+    assert "https://example.com/" not in fetched_urls
 
 
 @patch("news_manager.source_discovery._chat_json")
@@ -374,7 +370,7 @@ def test_discover_sources_stops_at_five_results_even_if_higher_requested(
         for i in range(1, 8)
     ]
     mock_fetch.side_effect = lambda url: (f"<html><title>{url}</title><body>body</body></html>", url, None)
-    mock_chat.side_effect = [{"classification": "is_index", "reason": "homepage"} for _ in range(7)]
+    mock_chat.side_effect = [{"classification": "news home", "reason": "homepage"} for _ in range(7)]
 
     out = discover_sources("ai news", max_results=10)
     assert len(out["suggestions"]) == 5
@@ -395,8 +391,8 @@ def test_discover_sources_excludes_existing_user_sources(
     ]
     mock_fetch.side_effect = lambda url: (f"<html><title>{url}</title><body>body</body></html>", url, None)
     mock_chat.side_effect = [
-        {"classification": "is_index", "reason": "owned"},
-        {"classification": "is_index", "reason": "new"},
+        {"classification": "news home", "reason": "owned"},
+        {"classification": "blog home", "reason": "new"},
     ]
 
     out = discover_sources("book reviews", max_results=2, excluded_source_urls={"https://owned.example/"})
@@ -431,7 +427,7 @@ def test_discover_sources_result_payload_is_minimal(
 ) -> None:
     mock_ddg.return_value = [{"title": "Site", "href": "https://site.example/", "body": ""}]
     mock_fetch.return_value = ("<html><title>Site</title><body>news body</body></html>", "https://site.example/", None)
-    mock_chat.return_value = {"classification": "is_index", "reason": "homepage layout"}
+    mock_chat.return_value = {"classification": "news home", "reason": "homepage layout"}
 
     out = discover_sources("topic", max_results=1)
     suggestion = out["suggestions"][0]
@@ -448,13 +444,14 @@ def test_discover_sources_passes_intent_to_classifier_prompt(
 ) -> None:
     mock_ddg.return_value = [{"title": "Site", "href": "https://site.example/", "body": ""}]
     mock_fetch.return_value = ("<html><title>Site</title><body>security content</body></html>", "https://site.example/", None)
-    mock_chat.return_value = {"classification": "irrelevant", "reason": "not aligned"}
+    mock_chat.return_value = {"classification": "other", "reason": "not aligned"}
 
     discover_sources("cybersecurity news", max_results=1)
 
     system_prompt = mock_chat.call_args.args[0]
     user_prompt = mock_chat.call_args.args[1]
-    assert "Intent alignment is mandatory for `is_index`" in system_prompt
-    assert "Document <title> text" in user_prompt
+    assert "Classify the page into exactly one class" in system_prompt
+    assert "Title:" in user_prompt
+    assert "Meta tags JSON:" in user_prompt
     assert "Intent: cybersecurity news" in user_prompt
     assert "Site" in user_prompt

@@ -108,14 +108,17 @@ Malformed JSON or missing `query` → **400** with `ok: false`, `error: "no_resu
 Current discovery algorithm:
 
 1. Build DDG seed query exactly as: `blogs or news sites about <intent>`.
-2. Run DDG text search and process result URLs depth-first.
-3. For each URL, fetch HTML, extract `<title>` text and `<body>` plain text, and classify with LLM into:
-   - `irrelevant`
-   - `follow`
-   - `is_index`
-4. If classification is `follow`, extract child links and recurse exactly one level.
-5. If classification is `is_index`, include the page as a suggestion (unless excluded by existing user sources).
-6. Stop once 5 suggestions are collected (even if `max_results` requested is higher), or when traversal is exhausted.
+2. Run DDG text search and process seed result URLs in rank order.
+3. For each seed URL, fetch HTML and classify with LLM using page URL + `<title>` + `<meta>` tags into:
+   - `blog home`
+   - `news home`
+   - `article`
+   - `other`
+4. If classification is `blog home` or `news home`, include as a suggestion (unless excluded by existing user sources).
+5. If classification is `other`, skip it.
+6. If classification is `article`, analyze the article `<body>` + outbound links to extract recommended URLs, then classify each recommended URL using the same page-meta classifier.
+7. Accept only recommended URLs classified as `blog home` or `news home`.
+8. Stop once 5 suggestions are collected (even if `max_results` requested is higher), or when candidate expansion is exhausted.
 
 The server still preloads the caller's existing source URLs from `public.sources` and excludes matching URLs/domains.
 
@@ -179,8 +182,8 @@ The server still preloads the caller's existing source URLs from `public.sources
         "title": "Example Source",
         "url": "https://example.com/",
         "base_domain": "example.com",
-        "classification": "is_index",
-        "reason": "Homepage-like article index structure with recent posts."
+        "classification": "news home",
+        "reason": "Title/meta signals indicate a publication homepage aligned to intent."
       }
     ],
     "meta": {
@@ -203,7 +206,7 @@ Suggestion field semantics:
 | `title` | string | `<title>` extracted from fetched HTML (fallbacks to domain when needed). |
 | `url` | string | Final discovered URL (scrubbed and safety-filtered). |
 | `base_domain` | string | Domain normalized from `url` (for dedupe/exclusion visibility). |
-| `classification` | string | Current accepted label for suggestions; today this is `is_index`. |
+| `classification` | string | Accepted label for suggestions: `blog home` or `news home`. |
 | `reason` | string | LLM rationale for classification decision. |
 
 **Errors:**

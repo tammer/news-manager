@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import json
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -26,14 +27,8 @@ logger = logging.getLogger(__name__)
 
 _MAX_SEARCH_RESULTS = 30
 _MAX_BODY_TEXT_FOR_LLM = 12000
-_MAX_VISITED_PAGES = 60
-_MAX_CHILD_LINKS = 12
-
-
-@dataclass(frozen=True)
-class _TraversalCandidate:
-    url: str
-    depth: int
+_MAX_LINK_LINES = 200
+_MAX_ANCHOR_TEXT = 240
 
 
 @dataclass(frozen=True)
@@ -63,40 +58,98 @@ def _extract_title(html: str) -> str:
     return title
 
 
+def _extract_meta_tags(html: str) -> list[dict[str, str]]:
+    soup = BeautifulSoup(html, "lxml")
+    out: list[dict[str, str]] = []
+    for node in soup.find_all("meta"):
+        entry: dict[str, str] = {}
+        for key in ("name", "property", "http-equiv", "content"):
+            value = node.get(key)
+            if isinstance(value, str) and value.strip():
+                entry[key] = value.strip()
+        if entry:
+            out.append(entry)
+    return out
+
+
 def _extract_body_text(html: str) -> str:
     soup = BeautifulSoup(html, "lxml")
     body = soup.body if soup.body is not None else soup
+    for tag in body.find_all(["script", "style", "noscript"]):
+        tag.decompose()
     text = " ".join(body.get_text(separator=" ", strip=True).split())
     return text[:_MAX_BODY_TEXT_FOR_LLM]
 
 
-def _extract_child_urls(html: str, base_url: str) -> list[str]:
+def _extract_article_link_lines(html: str, page_url: str) -> list[str]:
     soup = BeautifulSoup(html, "lxml")
-    out: list[str] = []
-    seen: set[str] = set()
-    for anchor in soup.find_all("a", href=True):
+    body = soup.body if soup.body is not None else soup
+    seen_href: set[str] = set()
+    lines: list[str] = []
+    for anchor in body.find_all("a", href=True):
+        if len(lines) >= _MAX_LINK_LINES:
+            break
         href = anchor.get("href")
         if not isinstance(href, str):
             continue
-        raw_href = href.strip()
-        if not raw_href or raw_href.startswith("#"):
+        raw = href.strip()
+        if not raw or raw.startswith("#"):
             continue
-        if raw_href.lower().startswith(("javascript:", "mailto:", "tel:")):
+        if raw.lower().startswith(("javascript:", "mailto:", "tel:")):
             continue
-        candidate_url = _scrub_url(urljoin(base_url, raw_href))
-        if not url_fetch_allowed(candidate_url):
+        absolute = _scrub_url(urljoin(page_url, raw))
+        if not url_fetch_allowed(absolute):
             continue
-        key = candidate_url.lower()
+        key = absolute.lower()
+        if key in seen_href:
+            continue
+        seen_href.add(key)
+        label = anchor.get_text(separator=" ", strip=True)
+        if len(label) > _MAX_ANCHOR_TEXT:
+            label = label[: _MAX_ANCHOR_TEXT - 3] + "..."
+        lines.append(f"{absolute}\t{label.replace(chr(9), ' ')}")
+    return lines
+
+
+def _article_recommendations(url: str, html: str) -> list[str]:
+    payload = {
+        "page_url": url,
+        "body_text": _extract_body_text(html),
+        "outbound_links_tab_separated": _extract_article_link_lines(html, url),
+    }
+    system_prompt = (
+        "You analyze a single article page and list recommended blogs or news sites. "
+        "Return JSON only in this exact shape: "
+        '{"recommended":[{"name":"short label","url":"https://... or null"}],"reasoning":"brief explanation"}. '
+        "Use only absolute URLs from the provided outbound links when available. "
+        "recommended may be empty."
+    )
+    data = _chat_json(system_prompt, json.dumps(payload, ensure_ascii=False))
+    if not isinstance(data, dict):
+        return []
+    recommended = data.get("recommended")
+    if not isinstance(recommended, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in recommended:
+        if not isinstance(item, dict):
+            continue
+        url_val = item.get("url")
+        if not isinstance(url_val, str):
+            continue
+        candidate = _scrub_url(url_val.strip())
+        if not candidate or not url_fetch_allowed(candidate):
+            continue
+        key = candidate.lower()
         if key in seen:
             continue
         seen.add(key)
-        out.append(candidate_url)
-        if len(out) >= _MAX_CHILD_LINKS:
-            break
+        out.append(candidate)
     return out
 
 
-def _classify_url(url: str, intent: str) -> _ClassifiedPage | None:
+def _classify_page_meta(url: str, intent: str) -> _ClassifiedPage | None:
     try:
         html, final_url, _err = fetch_html_limited(url)
     except Exception:
@@ -108,12 +161,12 @@ def _classify_url(url: str, intent: str) -> _ClassifiedPage | None:
     if not url_fetch_allowed(final_scrubbed):
         return None
     page_title = _extract_title(html)
-    body_text = _extract_body_text(html)
+    meta_tags = _extract_meta_tags(html)
     user_prompt = build_discovery_classification_user_prompt(
         intent=intent,
         url=final_scrubbed,
         page_title=page_title,
-        body_text=body_text,
+        meta_tags=meta_tags,
     )
     data = _chat_json(DISCOVERY_CLASSIFICATION_PROMPT, user_prompt)
     if not isinstance(data, dict):
@@ -154,60 +207,22 @@ def discover_sources(
     search_query = _build_seed_query(intent)
     rows = ddg_text_search(search_query, max_results=_MAX_SEARCH_RESULTS, region=locale)
 
-    stack: list[_TraversalCandidate] = []
-    seed_seen: set[str] = set()
-    for row in reversed(rows):
-        href = _scrub_url((row.get("href") or "").strip())
-        if not href or not url_fetch_allowed(href):
-            continue
-        key = href.lower()
-        if key in seed_seen:
-            continue
-        seed_seen.add(key)
-        stack.append(_TraversalCandidate(url=href, depth=0))
-
     suggestions: list[dict[str, str]] = []
     seen_suggestion_urls: set[str] = set()
     seen_suggestion_domains: set[str] = set()
-    visited_urls: set[str] = set()
+    seen_classification_urls: set[str] = set()
     classified_count = 0
 
-    while stack and len(suggestions) < capped_max_results and classified_count < _MAX_VISITED_PAGES:
-        node = stack.pop()
-        url_key = node.url.lower()
-        if url_key in visited_urls:
-            continue
-        visited_urls.add(url_key)
-
-        classified = _classify_url(node.url, intent)
-        classified_count += 1
-        if classified is None:
-            continue
-
+    def _try_add_suggestion(classified: _ClassifiedPage) -> None:
         final_url_key = classified.url.lower()
-        if final_url_key in visited_urls:
-            visited_urls.add(final_url_key)
-
-        if classified.classification == "follow" and node.depth == 0:
-            child_urls = _extract_child_urls(classified.content, classified.url)
-            for child in reversed(child_urls):
-                child_key = child.lower()
-                if child_key in visited_urls:
-                    continue
-                stack.append(_TraversalCandidate(url=child, depth=1))
-            continue
-
-        if classified.classification != "is_index":
-            continue
-
         if final_url_key in excluded_urls:
-            continue
+            return
         if classified.base_domain and classified.base_domain in excluded_hosts:
-            continue
+            return
         if final_url_key in seen_suggestion_urls:
-            continue
+            return
         if classified.base_domain and classified.base_domain in seen_suggestion_domains:
-            continue
+            return
         suggestions.append(
             {
                 "title": classified.title or classified.base_domain or "Unknown source",
@@ -220,6 +235,46 @@ def discover_sources(
         seen_suggestion_urls.add(final_url_key)
         if classified.base_domain:
             seen_suggestion_domains.add(classified.base_domain)
+
+    seed_seen: set[str] = set()
+    for row in rows:
+        if len(suggestions) >= capped_max_results:
+            break
+        href = _scrub_url((row.get("href") or "").strip())
+        if not href or not url_fetch_allowed(href):
+            continue
+        seed_key = href.lower()
+        if seed_key in seed_seen:
+            continue
+        seed_seen.add(seed_key)
+        if seed_key in seen_classification_urls:
+            continue
+        seen_classification_urls.add(seed_key)
+
+        classified = _classify_page_meta(href, intent)
+        classified_count += 1
+        if classified is None:
+            continue
+        if classified.classification in {"blog home", "news home"}:
+            _try_add_suggestion(classified)
+            continue
+        if classified.classification == "other":
+            continue
+        if classified.classification != "article":
+            continue
+        for rec_url in _article_recommendations(classified.url, classified.content):
+            if len(suggestions) >= capped_max_results:
+                break
+            rec_key = rec_url.lower()
+            if rec_key in seen_classification_urls:
+                continue
+            seen_classification_urls.add(rec_key)
+            rec_classified = _classify_page_meta(rec_url, intent)
+            classified_count += 1
+            if rec_classified is None:
+                continue
+            if rec_classified.classification in {"blog home", "news home"}:
+                _try_add_suggestion(rec_classified)
 
     return {
         "ok": True,

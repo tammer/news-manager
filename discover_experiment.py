@@ -23,7 +23,7 @@ from typing import Any
 SUPABASE_URL = "https://uaizrqhyomcgaowjetyd.supabase.co"
 SUPABASE_PUBLISHABLE_KEY = "sb_publishable_DSZ2FtoAtzUbMitch1yaMA_L_P1CsPK"
 SUPABASE_EMAIL = "tammer@tammer.com"
-DISCOVERY_API_BASE_URL = "http://127.0.0.1:8080"
+DISCOVERY_API_BASE_URL = "http://127.0.0.1:5000"
 
 
 def _http_json(method: str, url: str, headers: dict[str, str], body: dict | None = None) -> dict:
