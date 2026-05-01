@@ -15,12 +15,14 @@ from news_manager.llm import get_client
 
 SYSTEM_PROMPT = (
     "You are a classifer.  given a URL, meta tags and title, determine if this web page "
-    "is an a) article (blog post or news story) b) home page (blog home page or news home page) c) other."
-    "You must pick one of those four categories."
-    'Respond with JSON only in this exact shape: {"class":"blog/news home|article|other","reasoning":"..."}'
+    "is an a) article (blog post or news story) b) home page (blog home page or news home page) c) other. "
+    "You must pick one of these four categories: blog home, news home, article, other. "
+    "You will also determine if the primary theme of the page is related to the theme of 'book reviews'."
+    'Respond with JSON only in this exact shape: {"class":"blog home|news home|article|other","reasoning":"...","on_theme":"yes|no|unknown"}'
 )
 
-ALLOWED_CLASSES = {"blog home", "home page", "article", "other"}
+ALLOWED_CLASSES = {"blog home", "news home", "article", "other"}
+ALLOWED_ON_THEME = {"yes", "no", "unknown"}
 
 
 def main() -> None:
@@ -95,12 +97,21 @@ def main() -> None:
 
     klass = parsed.get("class")
     reasoning = parsed.get("reasoning")
-    if not isinstance(klass, str) or not isinstance(reasoning, str):
-        print('LLM JSON must contain string fields "class" and "reasoning"', file=sys.stderr)
+    on_theme = parsed.get("on_theme")
+    if (
+        not isinstance(klass, str)
+        or not isinstance(reasoning, str)
+        or not isinstance(on_theme, str)
+    ):
+        print(
+            'LLM JSON must contain string fields "class", "reasoning", and "on_theme"',
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     klass = klass.strip().lower()
     reasoning = reasoning.strip()
+    on_theme = on_theme.strip().lower()
     if klass not in ALLOWED_CLASSES:
         print(reply)
         print(
@@ -108,8 +119,12 @@ def main() -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+    if on_theme not in ALLOWED_ON_THEME:
+        print(reply)
+        print('LLM "on_theme" must be one of: "yes", "no", "unknown"', file=sys.stderr)
+        sys.exit(1)
 
-    output = {"class": klass, "reasoning": reasoning}
+    output = {"class": klass, "reasoning": reasoning, "on_theme": on_theme}
     print(json.dumps(output, indent=2, ensure_ascii=False))
 
 
