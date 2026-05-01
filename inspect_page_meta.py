@@ -15,8 +15,12 @@ from news_manager.llm import get_client
 
 SYSTEM_PROMPT = (
     "You are a classifer.  given a URL, meta tags and title, determine if this web page "
-    "is a blog post or a blog home page or news home page or neither"
+    "is an a) article (blog post or news story) b) home page (blog home page or news home page) c) other."
+    "You must pick one of those four categories."
+    'Respond with JSON only in this exact shape: {"class":"blog/news home|article|other","reasoning":"..."}'
 )
+
+ALLOWED_CLASSES = {"blog home", "home page", "article", "other"}
 
 
 def main() -> None:
@@ -75,10 +79,38 @@ def main() -> None:
     if not reply:
         print("Empty LLM response", file=sys.stderr)
         sys.exit(1)
+    reply = reply.strip()
 
-    sys.stdout.write(reply.strip())
-    if not reply.endswith("\n"):
-        sys.stdout.write("\n")
+    try:
+        parsed = json.loads(reply)
+    except json.JSONDecodeError:
+        print(reply)
+        print("LLM response was not valid JSON", file=sys.stderr)
+        sys.exit(1)
+
+    if not isinstance(parsed, dict):
+        print(parsed)
+        print("LLM JSON must be an object", file=sys.stderr)
+        sys.exit(1)
+
+    klass = parsed.get("class")
+    reasoning = parsed.get("reasoning")
+    if not isinstance(klass, str) or not isinstance(reasoning, str):
+        print('LLM JSON must contain string fields "class" and "reasoning"', file=sys.stderr)
+        sys.exit(1)
+
+    klass = klass.strip().lower()
+    reasoning = reasoning.strip()
+    if klass not in ALLOWED_CLASSES:
+        print(reply)
+        print(
+            'LLM "class" must be one of: "blog home", "news home", "article", "other"',
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    output = {"class": klass, "reasoning": reasoning}
+    print(json.dumps(output, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":
