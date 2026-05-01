@@ -7,7 +7,7 @@ from pprint import pprint
 
 from news_manager.source_discovery import _classify_url
 
-TEST_URL = "https://sudowrite.com/blog/the-ultimate-list-100-book-review-blogs-accepting-submissions-in-2025/"
+TEST_URL = "https://mrbookreview.com/best-book-blogs-to-read-updated/"
 TEST_INTENT = "book reviews"
 
 

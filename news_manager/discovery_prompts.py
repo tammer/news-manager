@@ -4,71 +4,66 @@ from __future__ import annotations
 
 DISCOVERY_CLASSIFICATION_ALLOWED = frozenset({"irrelevant", "follow", "is_index"})
 
-DISCOVERY_CLASSIFICATION_PROMPT = """# Website Classification Prompt (Blog/News Index Detection)
+DISCOVERY_CLASSIFICATION_PROMPT = """# HTML Page Classification Prompt
 
-You are a classifier that analyzes the raw HTML <body> content of a webpage and determines whether it is:
+You are a precise classifier. The user message supplies:
 
-1. The index/homepage of a SINGLE blog or news site
-2. A multi-site blog/news AGGREGATOR or directory
-3. Not relevant
+- **Intent** — use it as a required relevance filter for `is_index`.
+- **URL**
+- **Document title** — text taken from the HTML `<title>` element (may be empty).
+- **Body text** — plain text extracted from the HTML `<body>`.
 
----
+Use **both** the document `<title>` and the body. The title often reveals page purpose (homepage vs single article vs listicle/roundup), the publication or product, and topical focus; combine it with body structure and links.
 
-## CRITICAL RULE (HIGHEST PRIORITY)
-
-If the page contains links to articles from MULTIPLE different root domains (e.g. nytimes.com, medium.com, cnn.com all appearing together), you MUST classify it as:
-
-→ "follow"
-
-Do NOT classify as "is_index" in this case under any circumstances.
+**Intent alignment is mandatory for `is_index`:** only choose `is_index` when the page is a plausible single-site news/blog index *and* its titles/topics align with the user intent. If the page is index-like but off-topic vs intent, classify as `irrelevant`.
 
 ---
 
-## Decision Rules
+## Categories
 
-### "follow" (highest priority if triggered)
-Use "follow" if ANY of the following are true:
-- Content links to multiple different domains (very important)
-- It aggregates articles/posts from different publishers
-- It resembles RSS feeds, “top stories from around the web”, curated lists
-- It is clearly a directory of external content sources
-- It is an article or blog indexing other articles or blogs
+### 1) Home Page (News/Blog Index)
+The page is the main landing page of a single news site or blog.
+The response for this category should be "is_index".
 
----
-
-### "is_index"
-Use "is_index" only if ALL of the following are true:
-- the URL suggests it is root of a blog/news publication and not a single article
-- Content represents a SINGLE blog/news publication
-- Most links point to the SAME root domain
-- It shows a homepage-style feed (recent posts, headlines, excerpts)
-- It is clearly the main page of one publication
-- The indexed articles are topically consistent with the user-provided intent
-
-If the page may be a valid index page but its article topics are mostly unrelated to the user intent, classify as "irrelevant".
+**Typical signals:**
+- Multiple article headlines or summaries
+- Repeated structure (cards, list items, grids)
+- Links mostly pointing to the same domain
+- Navigation menus, categories, or sections (e.g., Politics, Tech, Opinion)
+- Little to no full-length content; mostly previews or excerpts
+- Document `<title>` often matches site branding or a section home (not a long article headline)
+- Document `<title>` is only a few words.
+- the URL does not contain a huyphen delimited article title.
 
 ---
 
-### "irrelevant"
-Use "irrelevant" if:
-- It is a single article page (not a listing/index)
-- It is a marketing/landing page
-- It is a forum, documentation page, login page, or product page
-- It does not clearly represent a blog/news index or aggregator
-- It is an index/aggregator but the indexed topics are not aligned with user intent
+### 2) Meta Article (Discussing Other Blogs/Sites)
+The page is a single article/post that primarily discusses, summarizes, or links to content from *other* blogs, websites, or sources.
 
+**Typical signals:**
+- Long-form content focused on commentary or aggregation
+- Many outbound links to different domains
+- Mentions of multiple publications, authors, or sources
+- Phrases like:
+  - "according to"
+  - "as reported by"
+  - "here are some of the best articles"
+- Structured as a narrative or analysis rather than a list of internal posts
+- Document `<title>` often reads like one article or listicle ("The best…", "100 blogs…", "Ultimate list…")
+
+The response for this category should be "follow".
 ---
 
-## Important Heuristics
+### 3) Other
+Anything that does not clearly fit into the above categories.
 
-- Domain diversity is the strongest signal in the entire task
-- Multiple external domains ⇒ ALWAYS "follow"
-- Single-domain feed ⇒ "is_index"
-- Do not confuse “many articles” with “many sources”
-- Intent alignment is mandatory for "is_index"
-- If intent alignment is weak or absent, prefer "irrelevant"
-
----
+**Examples include:**
+- A single standard article that is not about other blogs
+- Product pages, landing pages, or marketing sites
+- Login/signup pages
+- Documentation or API references
+- Forums or social media pages
+- Index or article pages whose topics do not match the user intent
 
 ## Output format (STRICT JSON ONLY)
 
@@ -76,7 +71,7 @@ Return exactly:
 
 {
   "classification": "irrelevant | follow | is_index",
-  "reason": "Brief explanation referencing domain structure and page type signals."
+  "reason": "Brief explanation referencing title, body, domain/link structure, and intent where relevant."
 }
 
 ---
@@ -85,12 +80,16 @@ Return only JSON. No markdown. No extra keys.
 """
 
 
-def build_discovery_classification_user_prompt(*, intent: str, url: str, body_text: str) -> str:
+def build_discovery_classification_user_prompt(*, intent: str, url: str, page_title: str, body_text: str) -> str:
+    title_line = page_title.strip() if page_title.strip() else "(empty — no <title> text found)"
     return (
         f"Intent: {intent}\n"
         f"URL: {url}\n\n"
+        "Document <title> text (from HTML <title>):\n"
+        f"{title_line}\n\n"
         "You must use the intent above as a required relevance filter.\n"
-        "Only return is_index when the indexed content is consistent with that intent.\n\n"
-        "HTML <body> text:\n"
+        "Only return is_index when the indexed content is consistent with that intent.\n"
+        "Use the document title together with the body for classification and relevance.\n\n"
+        "HTML <body> plain text:\n"
         f"{body_text}"
     )

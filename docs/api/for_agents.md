@@ -109,7 +109,7 @@ Current discovery algorithm:
 
 1. Build DDG seed query exactly as: `blogs or news sites about <intent>`.
 2. Run DDG text search and process result URLs depth-first.
-3. For each URL, fetch HTML, extract `<body>` text, and classify with LLM into:
+3. For each URL, fetch HTML, extract `<title>` text and `<body>` plain text, and classify with LLM into:
    - `irrelevant`
    - `follow`
    - `is_index`

@@ -107,8 +107,14 @@ def _classify_url(url: str, intent: str) -> _ClassifiedPage | None:
     final_scrubbed = _scrub_url(final_url)
     if not url_fetch_allowed(final_scrubbed):
         return None
+    page_title = _extract_title(html)
     body_text = _extract_body_text(html)
-    user_prompt = build_discovery_classification_user_prompt(intent=intent, url=final_scrubbed, body_text=body_text)
+    user_prompt = build_discovery_classification_user_prompt(
+        intent=intent,
+        url=final_scrubbed,
+        page_title=page_title,
+        body_text=body_text,
+    )
     data = _chat_json(DISCOVERY_CLASSIFICATION_PROMPT, user_prompt)
     if not isinstance(data, dict):
         return None
@@ -117,7 +123,7 @@ def _classify_url(url: str, intent: str) -> _ClassifiedPage | None:
     if classification not in DISCOVERY_CLASSIFICATION_ALLOWED:
         return None
     return _ClassifiedPage(
-        title=_extract_title(html),
+        title=page_title,
         url=final_scrubbed,
         base_domain=_domain_name(final_scrubbed),
         content=html,

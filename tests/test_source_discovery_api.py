@@ -454,5 +454,7 @@ def test_discover_sources_passes_intent_to_classifier_prompt(
 
     system_prompt = mock_chat.call_args.args[0]
     user_prompt = mock_chat.call_args.args[1]
-    assert "Intent alignment is mandatory for \"is_index\"" in system_prompt
+    assert "Intent alignment is mandatory for `is_index`" in system_prompt
+    assert "Document <title> text" in user_prompt
     assert "Intent: cybersecurity news" in user_prompt
+    assert "Site" in user_prompt
