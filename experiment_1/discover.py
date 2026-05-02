@@ -6,12 +6,13 @@ Pipeline:
   1. User gives a theme.
   2. LLM expands the theme into several DuckDuckGo queries.
   3. We run each query through DuckDuckGo.
+  3b. Heuristic "curation list" DDG hits are fetched; outbound links become extra hits.
   4. Hits are rolled up by domain (best title / snippet / hit count).
   5. LLM judges each domain: keep / maybe / drop, with kind + reason.
   6. Pretty table on stdout; full structured record + log file in runs/.
 
-Read-only imports from `news_manager.config` and `news_manager.llm` — no edits
-to the rest of the codebase. DRY does not matter here.
+Imports `news_manager.config`, `news_manager.llm`, and URL safety helpers from
+`news_manager.source_resolve` for hub fetches only.
 """
 
 from __future__ import annotations
@@ -27,10 +28,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import httpx
+from bs4 import BeautifulSoup
 from duckduckgo_search import DDGS
 
-from news_manager.config import GROQ_BASE_URL, groq_model, load_dotenv_if_present
+from news_manager.config import DEFAULT_HTTP_TIMEOUT, GROQ_BASE_URL, groq_model, load_dotenv_if_present
 from news_manager.llm import get_client
+from news_manager.source_resolve import _scrub_url, url_fetch_allowed
 
 
 EXPERIMENT_DIR = Path(__file__).resolve().parent
@@ -39,6 +43,32 @@ RUNS_DIR = EXPERIMENT_DIR / "runs"
 DEFAULT_MAX_QUERIES = 6
 DEFAULT_PER_QUERY = 10
 DEFAULT_TOP_DOMAINS_FOR_JUDGE = 50
+DEFAULT_MAX_HUB_PAGES = 4
+DEFAULT_HUB_MAX_LINKS_PER_PAGE = 45
+_MAX_HUB_HTML_BYTES = 512_000
+_HUB_USER_AGENT = "news-manager-experiment-1-hub-crawl/1.0"
+# Skip outbound targets that are almost never publication homepages for this task.
+_SKIP_HUB_LINK_TARGET_DOMAINS = frozenset(
+    {
+        "twitter.com",
+        "x.com",
+        "facebook.com",
+        "instagram.com",
+        "linkedin.com",
+        "reddit.com",
+        "pinterest.com",
+        "tiktok.com",
+        "youtube.com",
+        "youtu.be",
+        "t.co",
+        "discord.gg",
+        "threads.net",
+        "bsky.app",
+        "wikipedia.org",
+        "amazon.com",
+        "amzn.to",
+    }
+)
 
 logger = logging.getLogger("experiment")
 
@@ -106,6 +136,207 @@ def extract_base_domain(raw_url: str) -> str:
     if host.startswith("www."):
         host = host[4:]
     return host
+
+
+def curation_page_score(*, title: str, snippet: str, url: str) -> int:
+    """Heuristic strength that a DDG hit points at a list/roundup of blogs or sites."""
+    text = f"{title} {snippet}".lower()
+    path = (urllib.parse.urlparse(url).path or "").lower()
+    score = 0
+    if re.search(r"\b\d+\s+(best|top|greatest|essential)\b", text):
+        score += 2
+    if re.search(r"\b(best|top|greatest|essential)\s+\d+\b", text):
+        score += 2
+    phrases = (
+        "best blogs",
+        "top blogs",
+        "blogs to read",
+        "blogs you",
+        "bloggers to",
+        "must-read",
+        "must read",
+        "blog roundup",
+        "blogs every",
+        "newsletters to",
+        "newsletter roundup",
+        "favorite blogs",
+        "great blogs",
+        "blogs for ",
+        "sites to follow",
+        "websites to follow",
+    )
+    if any(p in text for p in phrases):
+        score += 2
+    path_bits = ("best-", "top-", "roundup", "list-of", "blogs-to", "newsletters")
+    if any(b in path for b in path_bits):
+        score += 1
+    return score
+
+
+def looks_like_curation_page(*, title: str, snippet: str, url: str) -> bool:
+    return curation_page_score(title=title, snippet=snippet, url=url) >= 2
+
+
+def _fetch_hub_page_html(url: str) -> tuple[str | None, str | None, str | None]:
+    """GET ``url`` and return ``(html, error_message, final_url)``.
+
+    ``final_url`` is the last URL after redirects (for resolving relative links and
+    same-host filtering). On failure, ``html`` and ``final_url`` are None.
+    """
+    cleaned = _scrub_url(url.strip())
+    if not cleaned or not url_fetch_allowed(cleaned):
+        return None, "url_not_allowed", None
+    try:
+        with httpx.Client(
+            follow_redirects=True,
+            timeout=DEFAULT_HTTP_TIMEOUT,
+            headers={"User-Agent": _HUB_USER_AGENT},
+        ) as client:
+            resp = client.get(cleaned)
+            resp.raise_for_status()
+    except Exception as exc:
+        return None, str(exc), None
+    final = _scrub_url(str(resp.url))
+    ctype = (resp.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+    if ctype and "html" not in ctype and "text/plain" not in ctype:
+        return None, f"unexpected_content_type:{ctype or 'empty'}", final
+    raw = resp.content[:_MAX_HUB_HTML_BYTES]
+    try:
+        html = raw.decode(resp.encoding or "utf-8", errors="replace")
+    except Exception:
+        html = raw.decode("utf-8", errors="replace")
+    return html, None, final
+
+
+def _extract_external_domains_from_html(
+    *,
+    html: str,
+    page_url: str,
+    hub_domain: str,
+    max_links: int,
+) -> list[tuple[str, str]]:
+    """Return up to ``max_links`` (absolute_url, anchor_text) for external http(s) hosts."""
+    soup = BeautifulSoup(html, "html.parser")
+    seen_target_domains: set[str] = set()
+    out: list[tuple[str, str]] = []
+    base = _scrub_url(page_url)
+    for tag in soup.find_all("a", href=True):
+        if len(out) >= max_links:
+            break
+        raw_href = (tag.get("href") or "").strip()
+        if not raw_href or raw_href.startswith(("#", "javascript:", "mailto:", "tel:")):
+            continue
+        absolute = urllib.parse.urljoin(base, raw_href)
+        scrubbed = _scrub_url(absolute)
+        if not scrubbed or not url_fetch_allowed(scrubbed):
+            continue
+        parsed = urllib.parse.urlparse(scrubbed)
+        if parsed.scheme not in ("http", "https"):
+            continue
+        target_domain = extract_base_domain(scrubbed)
+        if not target_domain or target_domain == hub_domain:
+            continue
+        if target_domain in _SKIP_HUB_LINK_TARGET_DOMAINS:
+            continue
+        if target_domain in seen_target_domains:
+            continue
+        seen_target_domains.add(target_domain)
+        anchor = " ".join(tag.get_text(" ", strip=True).split())[:200]
+        out.append((scrubbed, anchor))
+    return out
+
+
+def expand_raw_hits_via_hub_crawls(
+    raw_hits: list[dict[str, Any]],
+    *,
+    max_hubs: int,
+    max_links_per_hub: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Append synthetic hits from outbound links on detected curation/list pages.
+
+    Returns ``(combined_hits, hub_events)`` where ``combined_hits`` is ``raw_hits`` plus
+    new rows with ``hit_source`` ``hub_link``, and ``hub_events`` logs each hub attempt.
+    """
+    log_section("STEP 3b: hub pages (crawl outbound links)")
+    if max_hubs <= 0:
+        logger.info("[hub] disabled (max_hubs=%d)", max_hubs)
+        return list(raw_hits), []
+
+    candidates: list[tuple[int, str, dict[str, Any]]] = []
+    seen_hub_urls: set[str] = set()
+    for h in raw_hits:
+        title = str(h.get("title", "") or "")
+        snippet = str(h.get("snippet", "") or "")
+        url = str(h.get("url", "") or "").strip()
+        if not url or not looks_like_curation_page(title=title, snippet=snippet, url=url):
+            continue
+        cleaned = _scrub_url(url)
+        if not cleaned or not url_fetch_allowed(cleaned):
+            continue
+        key = cleaned.lower()
+        if key in seen_hub_urls:
+            continue
+        seen_hub_urls.add(key)
+        score = curation_page_score(title=title, snippet=snippet, url=cleaned)
+        candidates.append((score, cleaned, h))
+
+    candidates.sort(key=lambda t: (-t[0], t[1]))
+    hub_events: list[dict[str, Any]] = []
+    synthetic: list[dict[str, Any]] = []
+
+    for idx, (_score, hub_url, source_hit) in enumerate(candidates[:max_hubs], start=1):
+        hub_title = str(source_hit.get("title", "") or "")[:200]
+        logger.info("[hub] (%d/%d) fetch %s", idx, min(max_hubs, len(candidates)), hub_url)
+        t0 = time.monotonic()
+        html, err, final_url = _fetch_hub_page_html(hub_url)
+        dt_ms = (time.monotonic() - t0) * 1000
+        page_base = final_url or hub_url
+        hub_domain_resolved = extract_base_domain(page_base)
+        event: dict[str, Any] = {
+            "hub_url": hub_url,
+            "hub_domain": hub_domain_resolved,
+            "final_url": final_url,
+            "ok": html is not None,
+            "error": err,
+            "ms": round(dt_ms, 1),
+            "links_emitted": 0,
+        }
+        if html is None:
+            logger.warning("[hub] fetch failed %s: %s", hub_url, err)
+            hub_events.append(event)
+            time.sleep(0.35)
+            continue
+        pairs = _extract_external_domains_from_html(
+            html=html,
+            page_url=page_base,
+            hub_domain=hub_domain_resolved,
+            max_links=max_links_per_hub,
+        )
+        event["links_emitted"] = len(pairs)
+        hub_events.append(event)
+        logger.info("[hub]   -> %d external link targets in %.0f ms", len(pairs), dt_ms)
+        for link_url, anchor in pairs:
+            synthetic.append(
+                {
+                    "query": f"[hub:{hub_domain_resolved}]",
+                    "title": anchor or link_url,
+                    "url": link_url,
+                    "snippet": f"Linked from curation page: {hub_title or hub_url}"[:500],
+                    "hit_source": "hub_link",
+                    "hub_referrer": page_base,
+                }
+            )
+        time.sleep(0.35)
+
+    if not synthetic:
+        logger.info("[hub] no synthetic hits added (no qualifying hubs or no links)")
+    else:
+        logger.info("[hub] added %d synthetic hits from %d hub pages", len(synthetic), len(hub_events))
+
+    combined = list(raw_hits)
+    for row in synthetic:
+        combined.append(row)
+    return combined, hub_events
 
 
 def _strip_code_fences(text: str) -> str:
@@ -285,6 +516,7 @@ def ddg_fetch(*, queries: list[str], per_query: int) -> list[dict[str, Any]]:
                     "title": title,
                     "url": href,
                     "snippet": body,
+                    "hit_source": "ddg",
                 }
             )
     logger.info("[ddg] total raw hits across all queries: %d", len(all_hits))
@@ -530,6 +762,7 @@ def write_run_record(
     rolled: list[dict[str, Any]],
     verdicts: list[dict[str, Any]],
     llm_call_count: int,
+    hub_crawl_events: list[dict[str, Any]] | None = None,
 ) -> None:
     record = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
@@ -542,6 +775,7 @@ def write_run_record(
         "raw_hits": raw_hits,
         "domain_rollup": rolled,
         "verdicts": verdicts,
+        "hub_crawl_events": hub_crawl_events or [],
     }
     json_path.write_text(json.dumps(record, indent=2), encoding="utf-8")
     logger.info("[output] wrote %s", json_path)
@@ -560,6 +794,23 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--top", type=int, default=DEFAULT_TOP_DOMAINS_FOR_JUDGE, help="Top N rolled-up domains sent to the judge LLM.")
     p.add_argument("--model", default=None, help="Override Groq model name (defaults to GROQ_MODEL / project default).")
     p.add_argument("--no-llm-judge", action="store_true", help="Skip the judging step (debugging the retrieval phase).")
+    p.add_argument(
+        "--no-hub-crawl",
+        action="store_true",
+        help="Do not fetch curation/list-style DDG URLs to harvest outbound blog links.",
+    )
+    p.add_argument(
+        "--max-hubs",
+        type=int,
+        default=DEFAULT_MAX_HUB_PAGES,
+        help="Max curation-style DDG result pages to fetch (0 disables hub crawl).",
+    )
+    p.add_argument(
+        "--hub-max-links",
+        type=int,
+        default=DEFAULT_HUB_MAX_LINKS_PER_PAGE,
+        help="Max distinct external domains to collect per hub page.",
+    )
     return p.parse_args(argv)
 
 
@@ -588,6 +839,10 @@ def main(argv: list[str] | None = None) -> int:
     logger.info("max queries: %d", args.max_queries)
     logger.info("per query:   %d", args.per_query)
     logger.info("judge top N: %d", args.top)
+    if args.no_hub_crawl or args.max_hubs <= 0:
+        logger.info("hub crawl:   off")
+    else:
+        logger.info("hub crawl:   on (max_hubs=%d, links/hub<=%d)", args.max_hubs, args.hub_max_links)
     logger.info("log file:    %s", log_path)
     logger.info("json file:   %s", json_path)
 
@@ -608,7 +863,16 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("Total LLM calls this run: %d", llm_calls[0])
         return 1
 
-    raw_hits = ddg_fetch(queries=queries, per_query=args.per_query)
+    raw_hits_ddg = ddg_fetch(queries=queries, per_query=args.per_query)
+    hub_crawl_events: list[dict[str, Any]] = []
+    if args.no_hub_crawl or args.max_hubs <= 0:
+        raw_hits = raw_hits_ddg
+    else:
+        raw_hits, hub_crawl_events = expand_raw_hits_via_hub_crawls(
+            raw_hits_ddg,
+            max_hubs=args.max_hubs,
+            max_links_per_hub=args.hub_max_links,
+        )
     rolled = rollup_by_domain(raw_hits)
 
     if args.no_llm_judge:
@@ -638,6 +902,7 @@ def main(argv: list[str] | None = None) -> int:
         rolled=rolled,
         verdicts=verdicts,
         llm_call_count=llm_calls[0],
+        hub_crawl_events=hub_crawl_events,
     )
     logger.info("Total LLM calls this run: %d", llm_calls[0])
     logger.info("done.")
