@@ -138,6 +138,9 @@ celerybeat.pid
 output.json
 .news-manager-cache.json
 
+# experiment_1: DuckDuckGo + LLM discovery run artifacts (.json records, .log files)
+experiment_1/runs/
+
 # Environments
 .env
 .envrc
