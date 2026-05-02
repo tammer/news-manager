@@ -245,17 +245,16 @@ def _parse_source_discovery_request(
     if locale_err is not None:
         return None, locale_err
 
-    max_results = body.get("max_results", 5)
-    if not isinstance(max_results, int):
-        return None, _json_error("'max_results' must be an integer.", status=400)
-    max_results_clamped = max(1, min(max_results, 10))
+    # Optional legacy field: ignored (discovery returns all judged domains).
+    max_results = body.get("max_results", None)
+    if max_results is not None and not isinstance(max_results, int):
+        return None, _json_error("'max_results' must be an integer if provided.", status=400)
 
     return (
         SourceDiscoveryParams(
             user_id=auth_user_id,
             query=query,
             locale=locale,
-            max_results=max_results_clamped,
         ),
         None,
     )
@@ -325,7 +324,6 @@ def create_app() -> Flask:
             user_id=params.user_id,
             query=params.query,
             locale=params.locale,
-            max_results=params.max_results,
             existing_source_urls=tuple(existing_urls),
         )
 

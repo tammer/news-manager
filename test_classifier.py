@@ -1,26 +1,21 @@
-"""Quick manual runner for the discovery URL classifier."""
+"""Deprecated: discovery no longer exposes a single-page classifier here.
+
+Use ``inspect_page_meta.py`` for one-off title/meta + LLM classification, or call
+``POST /api/sources/discover`` for multi-query discovery.
+"""
 
 from __future__ import annotations
 
-from dataclasses import asdict, is_dataclass
-from pprint import pprint
-
-from news_manager.source_discovery import _classify_url
-
-TEST_URL = "https://mrbookreview.com/best-book-blogs-to-read-updated/"
-TEST_INTENT = "book reviews"
+import sys
 
 
 def main() -> None:
-    result = _classify_url(TEST_URL, TEST_INTENT)
-    print("Raw classifier return value:")
-    pprint(result)
-
-    if result is not None and is_dataclass(result):
-        payload = asdict(result)
-        payload.pop("content", None)
-        print("\nAs dict (without content):")
-        pprint(payload)
+    print(
+        "test_classifier.py is deprecated: source discovery was rebuilt without "
+        "``_classify_url``. Use inspect_page_meta.py or the discover API.",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
 
 
 if __name__ == "__main__":

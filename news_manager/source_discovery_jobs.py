@@ -21,7 +21,6 @@ class SourceDiscoveryParams:
     user_id: str
     query: str
     locale: str | None
-    max_results: int
     existing_source_urls: tuple[str, ...] = ()
 
     def to_json_dict(self) -> dict[str, Any]:
@@ -29,7 +28,6 @@ class SourceDiscoveryParams:
             "user_id": self.user_id,
             "query": self.query,
             "locale": self.locale,
-            "max_results": self.max_results,
             "existing_source_urls_count": len(self.existing_source_urls),
         }
 
@@ -81,19 +79,11 @@ def _run_job(
         job.started_at = _now_iso()
 
     try:
-        if discovery_runner is discover_sources:
-            payload = discovery_runner(
-                params.query,
-                locale=params.locale,
-                max_results=params.max_results,
-                excluded_source_urls=set(params.existing_source_urls),
-            )
-        else:
-            payload = discovery_runner(
-                params.query,
-                locale=params.locale,
-                max_results=params.max_results,
-            )
+        payload = discovery_runner(
+            params.query,
+            locale=params.locale,
+            excluded_source_urls=set(params.existing_source_urls),
+        )
     except Exception as e:
         logger.exception("Source discovery job %s failed", job_id)
         with _jobs_lock:

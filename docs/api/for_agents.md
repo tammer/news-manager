@@ -105,20 +105,13 @@ Malformed JSON or missing `query` → **400** with `ok: false`, `error: "no_resu
 
 **Purpose:** Start an async source-discovery job that transforms a plain-English user intent into source suggestions.
 
-Current discovery algorithm:
+Discovery algorithm (high level):
 
-1. Build DDG seed query exactly as: `blogs or news sites about <intent>`.
-2. Run DDG text search and process seed result URLs in rank order.
-3. For each seed URL, fetch HTML and classify with LLM using page URL + `<title>` + `<meta>` tags into:
-   - `blog home`
-   - `news home`
-   - `article`
-   - `other`
-4. If classification is `blog home` or `news home`, include as a suggestion (unless excluded by existing user sources).
-5. If classification is `other`, skip it.
-6. If classification is `article`, analyze the article `<body>` + outbound links to extract recommended URLs, then classify each recommended URL using the same page-meta classifier.
-7. Accept only recommended URLs classified as `blog home` or `news home`.
-8. Stop once 5 suggestions are collected (even if `max_results` requested is higher), or when candidate expansion is exhausted.
+1. **Query generation (LLM):** Produce several diverse DuckDuckGo query strings for the intent.
+2. **Search:** Run each query through DuckDuckGo **text** search with worldwide region (`wt-wt`) and moderate safesearch. The optional request field **`locale`** is accepted for API compatibility but is **not** passed to DuckDuckGo (search is always worldwide).
+3. **Rollup:** Dedupe hits by registrable domain; keep best title/snippet, hit count, and a capped list of **candidate URLs** from DuckDuckGo (same host), plus the site root **`https://<domain>/`** when not already present.
+4. **Judge (LLM):** In batches, score each domain from title/snippet and the candidate list (no HTML fetch). The model returns **`suggested_url`**, which must be **exactly one** of that domain's `candidate_urls`. Verdicts include `keep`, `maybe`, and `drop`. Only suggestions with **judge score ≥ 4** are returned (after URL safety and existing-source exclusion). Sorted with `keep` before `maybe` before `drop`, then by descending `score`.
+5. **Listing URL:** Each suggestion's **`url`** is the judge's **`suggested_url`** when it matches a candidate; if the model omits it or picks an out-of-list URL, the server falls back to **`https://<domain>/`**.
 
 The server still preloads the caller's existing source URLs from `public.sources` and excludes matching URLs/domains.
 
@@ -129,8 +122,8 @@ The server still preloads the caller's existing source URLs from `public.sources
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `query` | string | **yes** | — | Non-empty natural-language request. |
-| `locale` | string | no | `null` | Optional locale/region hint for search provider. |
-| `max_results` | integer | no | `5` | Number of suggestions requested; clamped to **1–10**. |
+| `locale` | string | no | `null` | Ignored for DuckDuckGo (worldwide search); kept for clients that already send it. |
+| `max_results` | integer | no | — | **Deprecated / ignored.** If present it must be an integer or the server returns **400**. Discovery returns judged suggestions with **score ≥ 4** only. |
 
 **Success:** **202 Accepted**
 
@@ -146,7 +139,7 @@ The server still preloads the caller's existing source URLs from `public.sources
 
 | Status | `error` | When |
 |--------|---------|------|
-| 400 | `no_results` | Body missing/invalid fields (for example non-string `query`, non-integer `max_results`). |
+| 400 | `no_results` | Body missing/invalid fields (for example non-string `query`, or non-integer `max_results` when provided). |
 | 401 | `no_results` | Missing/invalid token, or missing required `sub`. |
 | 500 | `discover_failed` | Existing-source preload failed unexpectedly. |
 | 503 | `server_misconfigured` | `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` missing for existing-source preload. |
@@ -172,25 +165,28 @@ The server still preloads the caller's existing source URLs from `public.sources
     "user_id": "<jwt_sub>",
     "query": "privacy and security newsletters",
     "locale": null,
-    "max_results": 5,
     "existing_source_urls_count": 17
   },
   "result": {
     "ok": true,
     "suggestions": [
       {
+        "domain": "example.com",
+        "url": "https://www.example.com/section/news/",
         "title": "Example Source",
-        "url": "https://example.com/",
-        "base_domain": "example.com",
-        "classification": "news home",
-        "reason": "Title/meta signals indicate a publication homepage aligned to intent."
+        "kind": "news",
+        "score": 4,
+        "reason": "Snippet and domain suggest an on-theme news publication."
       }
     ],
     "meta": {
       "query": "privacy and security newsletters",
-      "candidates_considered": 12,
-      "max_results": 5,
-      "excluded_existing": 17
+      "generated_queries": ["…"],
+      "distinct_domains": 42,
+      "raw_hits": 120,
+      "excluded_existing": 17,
+      "llm_call_count": 4,
+      "min_score": 4
     }
   },
   "error": null
@@ -203,11 +199,12 @@ Suggestion field semantics:
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `title` | string | `<title>` extracted from fetched HTML (fallbacks to domain when needed). |
-| `url` | string | Final discovered URL (scrubbed and safety-filtered). |
-| `base_domain` | string | Domain normalized from `url` (for dedupe/exclusion visibility). |
-| `classification` | string | Accepted label for suggestions: `blog home` or `news home`. |
-| `reason` | string | LLM rationale for classification decision. |
+| `domain` | string | Lowercased host without `www.` (dedupe/exclusion key). |
+| `url` | string | Judge-picked URL from **DuckDuckGo candidates** for that domain (must match a candidate the server sent the model); falls back to **`https://<domain>/`** if the pick is missing or invalid. Scrubbed and URL-safety checked. |
+| `title` | string | Best representative title from search hits for that domain (fallback: domain). |
+| `kind` | string | One of: `news`, `blog`, `newsletter`, `aggregator`, `forum`, `other`. |
+| `score` | integer | Judge score **1–5** (higher is stronger fit). Only **4** or **5** appear in `suggestions` (lower scores are omitted). |
+| `reason` | string | Short LLM rationale. |
 
 **Errors:**
 
@@ -446,6 +443,7 @@ Not all routes use identical `error` codes; **`/api/sources/resolve`** often use
 |---------|--------|
 | Flask app | `news_manager/resolve_app.py` |
 | JWT | `news_manager/auth_supabase.py` |
+| Source discovery | `news_manager/source_discovery.py` (`discover_sources`), `news_manager/source_discovery_jobs.py` |
 | Source resolve body | `news_manager/source_resolve.py` (`resolve_source_json_body`, `resolve_source`) |
 | Catalog import | `news_manager/user_sources_catalog.py` |
 | Pipeline jobs | `news_manager/pipeline_jobs.py` |
