@@ -8,13 +8,13 @@ from dotenv import load_dotenv
 
 DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
-DEFAULT_MAX_ARTICLES = 15
+DEFAULT_MAX_ARTICLES = 10
 DEFAULT_HTTP_TIMEOUT = 30.0
 # Max characters of article body sent to the LLM (plan: document truncation)
 DEFAULT_CONTENT_MAX_CHARS = 12000
 DEFAULT_HTML_DISCOVERY_MAX_CANDIDATES = 200
 DEFAULT_SCRAPINGDOG_TIMEOUT = 60.0
-DEFAULT_SCRAPINGDOG_FALLBACK_ON = {403, 429}
+DEFAULT_SCRAPINGDOG_FALLBACK_ON = {401,403, 429}
 
 
 def load_dotenv_if_present() -> None:
