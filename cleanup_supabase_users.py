@@ -22,7 +22,7 @@ import httpx
 from dotenv import load_dotenv
 
 
-KEEP_EMAILS = {"tammer@tammer.com", "thomas@thomas.com"}
+KEEP_EMAILS = {"tammer@tammer.com", "shambhavi.mishra@antler.co"}
 
 
 def _require_env(name: str) -> str:
