@@ -6,7 +6,7 @@ import os
 
 from dotenv import load_dotenv
 
-DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 DEFAULT_MAX_ARTICLES = 15
 DEFAULT_HTTP_TIMEOUT = 30.0
