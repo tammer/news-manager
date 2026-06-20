@@ -220,6 +220,22 @@ def test_fetch_html_uses_scrapingdog_fallback_on_configured_status(
     mock_sd.assert_called_once()
 
 
+def test_fetch_html_no_fallback_on_non_configured_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SCRAPINGDOG_ENABLED", "true")
+    monkeypatch.setenv("SCRAPINGDOG_API_KEY", "sd-key")
+    monkeypatch.setenv("SCRAPINGDOG_FALLBACK_ON", "403,429,500")
+    req = httpx.Request("GET", "https://example.com/missing")
+    direct = httpx.Response(404, request=req, text="not found")
+    client = MagicMock()
+    client.get.return_value = direct
+    with patch("news_manager.fetch.httpx.get") as mock_sd:
+        out = fetch_html(client, "https://example.com/missing")
+    assert out is None
+    mock_sd.assert_not_called()
+
+
 def test_fetch_html_does_not_use_scrapingdog_when_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
