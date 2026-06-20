@@ -308,7 +308,10 @@ def fetch_html(client: httpx.Client, url: str) -> str | None:
                 )
                 if fallback is not None:
                     return fallback
-            r.raise_for_status()
+            # Status handled here; do not raise into the transport-error handler
+            # below (that would re-invoke Scrapingdog with no status gate).
+            logger.warning("HTTP %s fetching %s", r.status_code, url)
+            return None
         ctype = r.headers.get("content-type", "")
         prefix = r.text[:2000] if r.text else ""
         if not _response_ok_for_article_html(ctype, prefix):
@@ -465,7 +468,10 @@ def fetch_listing_body(client: httpx.Client, url: str) -> str | None:
                 )
                 if fallback is not None:
                     return fallback
-            r.raise_for_status()
+            # Status handled here; do not raise into the transport-error handler
+            # below (that would re-invoke Scrapingdog with no status gate).
+            logger.warning("discovery: HTTP %s fetching listing %s", r.status_code, url)
+            return None
         text = r.text
         if not text or not text.strip():
             fallback = _fetch_via_scrapingdog(url, context="listing", reason="empty_body")
